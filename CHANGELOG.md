@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.30.1 — 2026-10-30
+
+- **Fix: with Talkif's MCP server also added by hand, the plugin's own part did not start.** The plugin's tools are named `mcp__talkif__…`, the same names a hand-added server called "talkif" uses. Claude Code refused them, and that stopped the rest: no call_me, no task tools, the session never joined Talkif. Now a refused tool no longer stops anything else; the session joins as usual and says once which tools were not added and what to do: remove the hand-added server (`claude mcp remove talkif`), since the plugin brings it, and run `/reload-plugins`.
+
 ## 0.30.0 — 2026-10-30
 
 - **One plugin: Talkif for Claude Code.** The call-me plugin is now `talkif`, in its own marketplace: `claude plugin marketplace add Talkif-ai/talkif-claude && claude plugin install talkif@talkif-claude`. Everything call-me did stays: calls with your sessions, call_me, `/cm`, tasks between sessions.

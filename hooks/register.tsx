@@ -116,7 +116,7 @@ const TASK_TOOL_NAMES: ReadonlySet<string> = new Set(TASK_TOOLS.map(t => taskToo
 const PEERS_REFRESH_MS = 10 * 60_000
 // Sent as the User-Agent on every request to the backend and the bridge. Kept equal
 // to .claude-plugin/plugin.json's version: bump both together.
-export const VERSION = '0.30.0'
+export const VERSION = '0.30.1'
 const USER_AGENT = `talkif-claude/${VERSION}`
 // Debug pane: this session's bridge traffic, newest last (`/cm traffic`; recorded only with the debug option).
 const TRAFFIC_PANE = 'talkif-traffic'
@@ -1973,8 +1973,14 @@ export const register: Register = (on, options) => {
     // The folders option limits which sessions join (empty: every session).
     const { home } = await homeOf($)
     if (!folderAllowed(e.cwd, parseFolders(optFolders, home))) return next(e)
-    await $.command.register({ name: 'cm', description: 'Talkif: is this session reachable by phone? /cm help lists the commands.' })
-    await $.tool.register({
+    // One refused registration must not stop the rest: the session still joins Talkif
+    // (presence, ListAgents, SendMessage) and says once what it could not add.
+    const refused: string[] = []
+    const add = (what: string, done: Promise<unknown>) => done.catch((err: unknown) => {
+      refused.push(`${what} (${String(err).replace(/^(HooksError: )?/, '').slice(0, 160)})`)
+    })
+    await add('/cm', $.command.register({ name: 'cm', description: 'Talkif: is this session reachable by phone? /cm help lists the commands.' }))
+    await add(TOOL, $.tool.register({
       name: TOOL,
       isDeferred: false,
       description:
@@ -1990,8 +1996,13 @@ export const register: Register = (on, options) => {
         },
         required: ['questions'],
       },
-    })
-    for (const tool of TASK_TOOLS) await $.tool.register({ ...tool, isDeferred: false })
+    }))
+    for (const tool of TASK_TOOLS) await add(tool.name, $.tool.register({ ...tool, isDeferred: false }))
+    if (refused.length) {
+      // The plugin's tools are mcp__talkif__…: an MCP server the person added under the name
+      // "talkif" (Talkif's own, added by hand before the plugin bundled it) owns that name.
+      $.ui.log(`Claude Code did not add ${refused.join(', ')}. If you added an MCP server named "talkif" yourself, remove it (claude mcp remove talkif): this plugin brings Talkif's tools and needs that name. Then run /reload-plugins.`)
+    }
     // A reload keeps a call that was armed before it.
     try {
       await statePaths($)

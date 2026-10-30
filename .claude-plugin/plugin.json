@@ -1,6 +1,6 @@
 {
   "name": "talkif",
-  "version": "0.30.0",
+  "version": "0.30.1",
   "description": "Talkif for Claude Code: the Talkif API as tools, your sessions reachable by voice through the Talkif app, tasks between sessions, and calls that ring you when a session needs you.",
   "types": "./types/index.d.ts",
   "userConfig": {

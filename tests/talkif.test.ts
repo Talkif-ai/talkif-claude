@@ -401,6 +401,8 @@ function fakeTalkif(on: On) {
     requests: [] as { method: string; path: string; body: unknown }[],
     // GET /calls/{id}/transcript: the status it answers with.
     transcriptStatus: 403,
+    // $.tool.register refuses every tool (a hand-added server named "talkif" owns the names).
+    refuseTools: false,
     deliver: (_item: unknown) => {},
     idle: () => {},
   }
@@ -466,7 +468,10 @@ function fakeTalkif(on: On) {
   })
   on('ui.status', () => ({ value: undefined }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
-  on('tool.register', (_$, e) => ({ value: { tool: e.name } }))
+  on('tool.register', (_$, e) => {
+    if (world.refuseTools) throw new Error('a configured MCP server already uses the name talkif')
+    return { value: { tool: e.name } }
+  })
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   return world
 }
@@ -881,4 +886,19 @@ test('a call to the bundled server\'s session tools is refused with where to go 
   const ran = await $.tool.call({ tool: 'mcp__plugin_talkif_talkif__talkif_send' as `mcp__${string}__${string}`, to: 'docs', kind: 'tell', goal: 'x' })
   expect(ran.deny ?? String(ran.result)).toMatch(/separate cloud agent/)
   expect(world.requests.some(r => r.path.endsWith('/send'))).toBe(false)
+})
+
+test('a refused tool registration does not stop the session from joining Talkif, and says why once', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const world = fakeTalkif(on)
+  world.consent = true
+  world.refuseTools = true
+  await startSession($)
+  await clock.settle()
+  expect(world.registers).toBe(1)
+  const notes = world.logs.filter(l => /did not add/.test(l))
+  expect(notes.length).toBe(1)
+  expect(notes[0]).toMatch(/call_me/)
+  expect(notes[0]).toMatch(/claude mcp remove talkif/)
 })
