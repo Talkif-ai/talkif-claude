@@ -188,10 +188,10 @@ export function refusalReason(status: number, text: string): Problem | undefined
     return { reason: "this computer's IP address is not on the API key's allowlist", next: 'add it to the key in Developer → Credentials, or remove the restriction' }
   }
   if (status === 401) return { reason: 'the API key was refused (expired or revoked?)', next: `create a new key in Developer → Credentials and ${PASTE_KEY}` }
-  return { reason: 'the API key is not allowed to do this', next: 'run /cm setup to see what is missing' }
+  return { reason: 'the API key is not allowed to do this', next: 'run /talkif setup to see what is missing' }
 }
 
-// ---- /cm setup: one check per thing a user must have, each with its next step ----
+// ---- /talkif setup: one check per thing a user must have, each with its next step ----
 
 /** GET /connectors/consent, the fields setup reads. */
 export type Consent = {
@@ -237,7 +237,7 @@ export function failedProbe(name: string, scope: string, status: number, text: s
   }
   if (status === 401) return { name, ok: false, detail: 'the API key was refused (expired, revoked or mistyped)', next: KEY_STEP }
   if (status === 403) return { name, ok: false, detail: 'the API key is not allowed to do this', next: KEY_STEP }
-  return { name, ok: false, detail: `the backend answered ${status}${text ? `: ${text.slice(0, 160)}` : ''}`, next: 'Try /cm setup again in a minute; if it stays, check the API URL option (empty means Talkif).' }
+  return { name, ok: false, detail: `the backend answered ${status}${text ? `: ${text.slice(0, 160)}` : ''}`, next: 'Try /talkif setup again in a minute; if it stays, check the API URL option (empty means Talkif).' }
 }
 
 /** The consent body as a check: on, off (withdrawn), terms changed, or never turned on. */
@@ -264,12 +264,12 @@ export function setupReport(checks: readonly Check[]): string {
   } else {
     lines.push('', `Next step: ${steps[0]}`)
     for (const later of [...new Set(steps.slice(1))]) lines.push(`Then: ${later}`)
-    lines.push('Run /cm setup again after each step.')
+    lines.push('Run /talkif setup again after each step.')
   }
   return lines.join('\n')
 }
 
-// ---- Is it on? The status line, /cm and /cm help ----
+// ---- Is it on? The status line, /talkif and /talkif help ----
 
 /** The account name the backend sends (register answer, consent read); undefined when it sends none. */
 export const accountNameOf = (body: unknown): string | undefined =>
@@ -297,11 +297,11 @@ export function accountsText(names: readonly (string | undefined)[]): string {
   return parts.length === 1 ? (parts[0] ?? '') : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
 }
 
-/** What the status line and /cm read: one live state, so they never disagree with each other or /cm setup. */
-export type CallMeState = {
+/** What the status line and /talkif read: one live state, so they never disagree with each other or /talkif setup. */
+export type TalkifState = {
   /** What keeps it from working (no key, no Connectors flow, access refused); undefined when nothing does. */
   problem: Problem | undefined
-  /** Why this session is off: /cm off, /cm off all, or /cm default off; undefined when on. */
+  /** Why this session is off: /talkif off, /talkif off all, or /talkif default off; undefined when on. */
   off: 'session' | 'all' | 'default' | undefined
   /** An interview ringing or in progress, a call task running, or call tasks queued. */
   onCall: boolean
@@ -322,8 +322,8 @@ const sentence = (text: string): string => {
  * The status line; the first matching state wins: not set up, off, on a call,
  * connecting (no account registered yet, or every one retrying), on.
  */
-export function statusText(state: CallMeState): string {
-  if (state.problem) return '☎ Talkif: not set up — run /cm setup'
+export function statusText(state: TalkifState): string {
+  if (state.problem) return '☎ Talkif: not set up — run /talkif setup'
   if (state.off) return '☎ Talkif: off'
   if (state.onCall) return '☎ Talkif: on a call'
   if (state.offline) return '☎ Talkif: offline, retrying…'
@@ -332,12 +332,12 @@ export function statusText(state: CallMeState): string {
   return named.length ? `☎ Talkif: on · ${named.join(', ')}` : '☎ Talkif: on'
 }
 
-export const MORE = 'More: /cm help'
+export const MORE = 'More: /talkif help'
 
-/** /cm: two or three lines, in the same order as statusText. */
-export function cmLines(state: CallMeState): string {
+/** /talkif: two or three lines, in the same order as statusText. */
+export function cmLines(state: TalkifState): string {
   if (state.problem) return [`☎ Not set up: ${state.problem.reason}.`, `Next: ${sentence(state.problem.next)}`, MORE].join('\n')
-  if (state.off) return [`☎ Off. Turn it on with ${state.off === 'all' ? '/cm on all' : '/cm on'}.`, MORE].join('\n')
+  if (state.off) return [`☎ Off. Turn it on with ${state.off === 'all' ? '/talkif on all' : '/talkif on'}.`, MORE].join('\n')
   if (state.offline && !state.onCall) return ['☎ Offline: Talkif cannot be reached from here. The plugin keeps retrying by itself.', MORE].join('\n')
   if (state.registered.length === 0) return ['☎ Connecting…', MORE].join('\n')
   const call = state.flowName ? `Call "${state.flowName}" in the Talkif app.` : 'Call your Talkif agent in the Talkif app.'
@@ -345,20 +345,20 @@ export function cmLines(state: CallMeState): string {
   return [`${head} This session can be reached through ${accountsText(state.registered)}.`, call, MORE].join('\n')
 }
 
-/** /cm help: the common commands first; two columns when the terminal is wide enough, else stacked. */
+/** /talkif help: the common commands first; two columns when the terminal is wide enough, else stacked. */
 const HELP_ROWS: ReadonlyArray<readonly [string, string]> = [
-  ['/cm', 'is this session reachable?'],
-  ['/cm on | off', 'make this session reachable or not'],
-  ['/cm on all | off all', 'all open sessions on or off'],
-  ['/cm default on | off', 'how new sessions start'],
-  ['/cm setup', "check the connection, show what's missing"],
-  ['/cm traffic', 'what went back and forth (debug option)'],
-  ['/cm share private | ask | work', 'what members may do with this session'],
-  ['/cm ring', 'pick whose phone call_me rings'],
+  ['/talkif', 'is this session reachable?'],
+  ['/talkif on | off', 'make this session reachable or not'],
+  ['/talkif on all | off all', 'all open sessions on or off'],
+  ['/talkif default on | off', 'how new sessions start'],
+  ['/talkif setup', "check the connection, show what's missing"],
+  ['/talkif traffic', 'what went back and forth (debug option)'],
+  ['/talkif share private | ask | work', 'what members may do with this session'],
+  ['/talkif ring', 'pick whose phone call_me rings'],
 ]
 const HELP_ADVANCED: ReadonlyArray<readonly [string, string]> = [
-  ['/cm publish', 'refresh the phone agent after an update'],
-  ['/cm latency', 'time a spoken answer'],
+  ['/talkif publish', 'refresh the phone agent after an update'],
+  ['/talkif latency', 'time a spoken answer'],
 ]
 const HELP_ALL = [...HELP_ROWS, ...HELP_ADVANCED]
 const HELP_WIDTH = Math.max(...HELP_ALL.map(([cmd]) => cmd.length)) + 2
@@ -374,7 +374,7 @@ export function cmHelp(columns: number): string {
   return ['Commands', ...HELP_ROWS.map(row), '', 'Advanced', ...HELP_ADVANCED.map(row)].join('\n')
 }
 
-export const UNKNOWN_COMMAND = 'Unknown command. See /cm help.'
+export const UNKNOWN_COMMAND = 'Unknown command. See /talkif help.'
 
 /**
  * The name of the signed-in person who asked, as Talkif sends it (`callerName`),

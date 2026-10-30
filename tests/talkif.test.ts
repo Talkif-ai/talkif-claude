@@ -226,9 +226,9 @@ test('setup: refused probes name the missing scope; the report leads with the fi
 })
 
 import { UNKNOWN_COMMAND, cmHelp, accountLabel, accountNameOf, accountsText, cmLines, statusText } from '../hooks/config'
-import type { CallMeState } from '../hooks/config'
+import type { TalkifState } from '../hooks/config'
 
-const state = (over: Partial<CallMeState>): CallMeState => ({ problem: undefined, off: undefined, onCall: false, offline: false, registered: ['Acme'], flowName: 'Interviewer', ...over })
+const state = (over: Partial<TalkifState>): TalkifState => ({ problem: undefined, off: undefined, onCall: false, offline: false, registered: ['Acme'], flowName: 'Interviewer', ...over })
 const consentOff = { reason: 'Connectors are not turned on for your Talkif account', next: 'an owner or admin turns them on in the Talkif dashboard (Developer → Integrations)' }
 
 test('status line: one text per state, the first match wins', async () => {
@@ -239,7 +239,7 @@ test('status line: one text per state, the first match wins', async () => {
   expect(statusText(state({ registered: [] }))).toBe('☎ Talkif: connecting…')
   expect(statusText(state({ onCall: true }))).toBe('☎ Talkif: on a call')
   expect(statusText(state({ off: 'session' }))).toBe('☎ Talkif: off')
-  expect(statusText(state({ problem: consentOff }))).toBe('☎ Talkif: not set up — run /cm setup')
+  expect(statusText(state({ problem: consentOff }))).toBe('☎ Talkif: not set up — run /talkif setup')
   // Talkif unreachable (sleep, Wi-Fi): one line in the status, never chat lines.
   expect(statusText(state({ offline: true, registered: [] }))).toBe('☎ Talkif: offline, retrying…')
   expect(cmLines(state({ offline: true }))).toMatch(/^☎ Offline/)
@@ -268,48 +268,48 @@ test('account names: the backend\'s name only, else "your Talkif account"', asyn
   }
 })
 
-test('/cm is two or three lines: on, off, connecting or not set up', async () => {
+test('/talkif is two or three lines: on, off, connecting or not set up', async () => {
   expect(cmLines(state({ registered: ['Talkif Phone'] }))).toBe(
-    '☎ On. This session can be reached through Talkif Phone.\nCall "Interviewer" in the Talkif app.\nMore: /cm help',
+    '☎ On. This session can be reached through Talkif Phone.\nCall "Interviewer" in the Talkif app.\nMore: /talkif help',
   )
   expect(cmLines(state({ flowName: undefined, registered: [undefined] }))).toBe(
-    '☎ On. This session can be reached through your Talkif account.\nCall your Talkif agent in the Talkif app.\nMore: /cm help',
+    '☎ On. This session can be reached through your Talkif account.\nCall your Talkif agent in the Talkif app.\nMore: /talkif help',
   )
   expect(cmLines(state({ onCall: true }))).toMatch(/^☎ On a call\. This session can be reached through Acme\./)
-  expect(cmLines(state({ off: 'session' }))).toBe('☎ Off. Turn it on with /cm on.\nMore: /cm help')
-  expect(cmLines(state({ off: 'default' }))).toBe('☎ Off. Turn it on with /cm on.\nMore: /cm help')
-  // Off for every session: /cm on alone would not do it.
-  expect(cmLines(state({ off: 'all' }))).toBe('☎ Off. Turn it on with /cm on all.\nMore: /cm help')
-  expect(cmLines(state({ registered: [] }))).toBe('☎ Connecting…\nMore: /cm help')
+  expect(cmLines(state({ off: 'session' }))).toBe('☎ Off. Turn it on with /talkif on.\nMore: /talkif help')
+  expect(cmLines(state({ off: 'default' }))).toBe('☎ Off. Turn it on with /talkif on.\nMore: /talkif help')
+  // Off for every session: /talkif on alone would not do it.
+  expect(cmLines(state({ off: 'all' }))).toBe('☎ Off. Turn it on with /talkif on all.\nMore: /talkif help')
+  expect(cmLines(state({ registered: [] }))).toBe('☎ Connecting…\nMore: /talkif help')
   expect(cmLines(state({ problem: consentOff, off: 'all' }))).toBe(
     '☎ Not set up: Connectors are not turned on for your Talkif account.\n' +
-      'Next: An owner or admin turns them on in the Talkif dashboard (Developer → Integrations).\nMore: /cm help',
+      'Next: An owner or admin turns them on in the Talkif dashboard (Developer → Integrations).\nMore: /talkif help',
   )
   for (const s of [state({}), state({ off: 'all' }), state({ registered: [] }), state({ problem: consentOff })]) {
     expect(cmLines(s).split('\n').length).toBeLessThanOrEqual(3)
   }
 })
 
-test('/cm help: aligned two columns on a wide terminal, the common ones first', async () => {
+test('/talkif help: aligned two columns on a wide terminal, the common ones first', async () => {
   const lines = cmHelp(120).split('\n')
   expect(lines[0]).toBe('Commands')
   expect(lines[1]).toContain('is this session reachable?')
-  expect(lines.indexOf('Advanced')).toBeGreaterThan(lines.findIndex(l => l.trim().startsWith('/cm traffic')))
-  const rows = lines.filter(l => l.trim().startsWith('/cm'))
+  expect(lines.indexOf('Advanced')).toBeGreaterThan(lines.findIndex(l => l.trim().startsWith('/talkif traffic')))
+  const rows = lines.filter(l => l.trim().startsWith('/talkif'))
   expect(new Set(rows.map(l => l.length - l.trimStart().length)).size).toBe(1)
   expect(new Set(rows.map(l => l.indexOf(l.trim().split(/ {2,}/u)[1] ?? ''))).size).toBe(1)
-  for (const cmd of ['/cm on | off', '/cm on all | off all', '/cm default on | off', '/cm setup', '/cm traffic', '/cm publish', '/cm latency']) {
+  for (const cmd of ['/talkif on | off', '/talkif on all | off all', '/talkif default on | off', '/talkif setup', '/talkif traffic', '/talkif publish', '/talkif latency']) {
     expect(rows.some(l => l.trim().startsWith(`${cmd}  `))).toBe(true)
   }
-  expect(UNKNOWN_COMMAND).toBe('Unknown command. See /cm help.')
+  expect(UNKNOWN_COMMAND).toBe('Unknown command. See /talkif help.')
 })
 
-test('/cm help: stacked on a narrow terminal, no line wider than the pane', async () => {
+test('/talkif help: stacked on a narrow terminal, no line wider than the pane', async () => {
   const lines = cmHelp(40).split('\n')
-  expect(lines[1]).toBe('  /cm')
+  expect(lines[1]).toBe('  /talkif')
   expect(lines[2]).toBe('      is this session reachable?')
   expect(Math.max(...lines.map(l => l.length))).toBeLessThanOrEqual(48)
-  expect(lines.every(l => !/\/cm\S*.* {2,}\S/u.test(l))).toBe(true)
+  expect(lines.every(l => !/\/talkif\S*.* {2,}\S/u.test(l))).toBe(true)
 })
 
 import { CallTaskScope } from '../hooks/read-only'
@@ -476,7 +476,7 @@ function fakeTalkif(on: On) {
   return world
 }
 
-const cm = async ($: Engine, args: string): Promise<string> => (await $.command.run({ command: 'cm', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } })).text ?? ''
+const cm = async ($: Engine, args: string): Promise<string> => (await $.command.run({ command: 'talkif', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } })).text ?? ''
 const startSession = ($: Engine) => $.session.start({ cwd: '/home/test/app', surface: null, isInteractive: true })
 
 test('a refused bridge re-probes every 30 s and resumes once Connectors are on', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
@@ -487,7 +487,7 @@ test('a refused bridge re-probes every 30 s and resumes once Connectors are on',
   await clock.settle()
   expect(await cm($, '')).toBe(
     '☎ Not set up: Connectors are not turned on for your Talkif account.\n' +
-      'Next: An owner or admin turns them on in the Talkif dashboard (Developer → Integrations).\nMore: /cm help',
+      'Next: An owner or admin turns them on in the Talkif dashboard (Developer → Integrations).\nMore: /talkif help',
   )
   // The owner turns Connectors on: within 30 s the session is reachable again, no command needed.
   world.consent = true
@@ -495,10 +495,10 @@ test('a refused bridge re-probes every 30 s and resumes once Connectors are on',
   expect(world.registers).toBe(0)
   await clock.advance(1_000)
   expect(world.registers).toBe(1)
-  expect(await cm($, '')).toBe('☎ On. This session can be reached through Talkif Phone.\nCall "Interviewer" in the Talkif app.\nMore: /cm help')
+  expect(await cm($, '')).toBe('☎ On. This session can be reached through Talkif Phone.\nCall "Interviewer" in the Talkif app.\nMore: /talkif help')
 })
 
-test('/cm setup clears a stale refusal at once, and /cm agrees with it', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+test('/talkif setup clears a stale refusal at once, and /talkif agrees with it', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
   const clock = mock.clock(on)
   mock.store(on)
   const world = fakeTalkif(on)
@@ -514,12 +514,12 @@ test('/cm setup clears a stale refusal at once, and /cm agrees with it', { optio
   expect(report).toMatch(/All set/)
   expect(report).toMatch(/Accounts: Talkif Phone \(connected\)/)
   expect(report).not.toMatch(/personal/)
-  expect(report.endsWith('☎ On. This session can be reached through Talkif Phone.\nCall "Interviewer" in the Talkif app.\nMore: /cm help')).toBe(true)
+  expect(report.endsWith('☎ On. This session can be reached through Talkif Phone.\nCall "Interviewer" in the Talkif app.\nMore: /talkif help')).toBe(true)
   expect(world.registers).toBe(1)
   expect(await cm($, '')).toMatch(/^☎ On\. This session can be reached through Talkif Phone\./)
 })
 
-test('/cm help, switches and unknown commands answer in a line or a short list', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+test('/talkif help, switches and unknown commands answer in a line or a short list', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
   const clock = mock.clock(on)
   mock.store(on)
   const world = fakeTalkif(on)
@@ -527,12 +527,12 @@ test('/cm help, switches and unknown commands answer in a line or a short list',
   await startSession($)
   await clock.settle()
   expect(await cm($, 'help')).toBe(cmHelp(100))
-  expect(await cm($, 'frobnicate')).toBe('Unknown command. See /cm help.')
-  expect(await cm($, 'on everything now')).toBe('Unknown command. See /cm help.')
-  expect(await cm($, 'off')).toBe('☎ Off. Turn it on with /cm on.\nMore: /cm help')
-  expect(await cm($, 'off all')).toBe('☎ Off. Turn it on with /cm on all.\nMore: /cm help')
+  expect(await cm($, 'frobnicate')).toBe('Unknown command. See /talkif help.')
+  expect(await cm($, 'on everything now')).toBe('Unknown command. See /talkif help.')
+  expect(await cm($, 'off')).toBe('☎ Off. Turn it on with /talkif on.\nMore: /talkif help')
+  expect(await cm($, 'off all')).toBe('☎ Off. Turn it on with /talkif on all.\nMore: /talkif help')
   const back = await cm($, 'on all')
-  expect(back === '☎ Connecting…\nMore: /cm help' || back.startsWith('☎ On.')).toBe(true)
+  expect(back === '☎ Connecting…\nMore: /talkif help' || back.startsWith('☎ On.')).toBe(true)
   await clock.advance(1_000)
   expect(await cm($, '')).toMatch(/^☎ On\./)
   expect(await cm($, 'traffic')).toMatch(/debug option/)

@@ -35,7 +35,7 @@ import {
   SHARING_LEVELS,
   SHARING_TEXT,
 } from './config'
-import type { CallMeState, Check, Credentials, FlowRef, Problem, Sharing } from './config'
+import type { TalkifState, Check, Credentials, FlowRef, Problem, Sharing } from './config'
 import {
   TASK_CONVENTION,
   autonomyRule,
@@ -116,9 +116,9 @@ const TASK_TOOL_NAMES: ReadonlySet<string> = new Set(TASK_TOOLS.map(t => taskToo
 const PEERS_REFRESH_MS = 10 * 60_000
 // Sent as the User-Agent on every request to the backend and the bridge. Kept equal
 // to .claude-plugin/plugin.json's version: bump both together.
-export const VERSION = '0.30.1'
+export const VERSION = '0.30.2'
 const USER_AGENT = `talkif-claude/${VERSION}`
-// Debug pane: this session's bridge traffic, newest last (`/cm traffic`; recorded only with the debug option).
+// Debug pane: this session's bridge traffic, newest last (`/talkif traffic`; recorded only with the debug option).
 const TRAFFIC_PANE = 'talkif-traffic'
 const TRAFFIC_KEEP = 300
 const traffic = atom({ plugin: 'talkif', key: 'traffic' } as const, [])
@@ -228,13 +228,13 @@ let giveUpTimer: Timer | undefined
 // Plugin options (/config and /plugin → talkif → Configure options).
 let optApiKey = ''
 let optApiUrl = ''
-// What colleagues may do with this session: the option, or /cm share for this session alone.
+// What colleagues may do with this session: the option, or /talkif share for this session alone.
 let optSharing: Sharing = 'ask'
 let sessionSharing: Sharing | undefined
 let optFlowId = ''
 let optFolders = ''
 
-// Setup that is wrong (no key, no flow): shown by /cm, and once as a notice.
+// Setup that is wrong (no key, no flow): shown by /talkif, and once as a notice.
 class SetupProblem extends Error {
   constructor(readonly problem: Problem) {
     super(problemText(problem))
@@ -299,14 +299,14 @@ let flow: FlowRef | undefined
 let flowFrom: 'option' | 'remembered' | 'picked' | undefined
 const flowStoreKey = (url: string) => `flow:${url}`
 
-// Whose phone call_me rings, picked with /cm ring and remembered per Talkif address.
+// Whose phone call_me rings, picked with /talkif ring and remembered per Talkif address.
 // Never guessed: an account with one person needs no pick; with several, Talkif asks for one.
 type RingTarget = { userId: string; name: string }
 const ringStoreKey = (url: string) => `ring:${url}`
 const isRingTarget = (v: unknown): v is RingTarget => isRecord(v) && typeof v.userId === 'string' && typeof v.name === 'string'
-const RING_PICK_HINT = 'More than one person in this Talkif account can take calls: pick whose phone call_me rings with /cm ring.'
+const RING_PICK_HINT = 'More than one person in this Talkif account can take calls: pick whose phone call_me rings with /talkif ring.'
 
-/** The people call_me may ring, from Talkif; numbered as /cm ring lists them. */
+/** The people call_me may ring, from Talkif; numbered as /talkif ring lists them. */
 export const parseRingTargets = (body: unknown): RingTarget[] =>
   (Array.isArray(body) ? body : [])
     .filter(isRecord)
@@ -316,7 +316,7 @@ export const parseRingTargets = (body: unknown): RingTarget[] =>
       name: typeof t.name === 'string' && t.name.trim() ? t.name.trim() : typeof t.email === 'string' ? t.email : (t.userId as string),
     }))
 
-/** /cm ring <arg>: a number from the list, or the start of a name, case-insensitive; one match only. */
+/** /talkif ring <arg>: a number from the list, or the start of a name, case-insensitive; one match only. */
 export const chooseRingTarget = (list: readonly RingTarget[], arg: string): RingTarget | undefined => {
   const byId = list.find(t => t.userId === arg.trim())
   if (byId) return byId
@@ -339,7 +339,7 @@ const FLOW_RETRY_MS = 5 * 60_000
 let flowRetryAt = 0
 
 // The phone agent follows the instructions in the flow's Connectors node, which only
-// /cm publish writes: after a plugin update they stay old until then (the flow ran on
+// /talkif publish writes: after a plugin update they stay old until then (the flow ran on
 // its first prompt for 12 days). Said once per plugin version, not in every session.
 export const connectorsInstructions = (definition: unknown): string | undefined => {
   if (!isRecord(definition) || !isRecord(definition.nodes)) return undefined
@@ -361,7 +361,7 @@ async function hintStalePrompt($: EngineInterface) {
   const current = connectorsInstructions(await flowDefinition($, flow.id).catch(() => undefined))
   if (current === undefined || current === IDLE_PROMPT) return
   await $.store.set(key, true)
-  $.ui.log(`your phone agent still follows instructions from an older version of this plugin. Run /cm publish to update them in "${flow.name}" (only its instructions change).`)
+  $.ui.log(`your phone agent still follows instructions from an older version of this plugin. Run /talkif publish to update them in "${flow.name}" (only its instructions change).`)
 }
 
 async function resolveFlow($: EngineInterface): Promise<FlowRef> {
@@ -370,7 +370,7 @@ async function resolveFlow($: EngineInterface): Promise<FlowRef> {
   const { url } = await loadEnv($)
   const fromOption = optFlowId.trim()
   if (fromOption) {
-    // The flow's name, for /cm ("Call <name> in the Talkif app"); the id when it cannot be read.
+    // The flow's name, for /talkif ("Call <name> in the Talkif app"); the id when it cannot be read.
     const named = await api($, `/flows/${encodeURIComponent(fromOption)}`).catch(() => undefined)
     flow = { id: fromOption, name: isRecord(named) && typeof named.name === 'string' && named.name ? named.name : fromOption }
     flowFrom = 'option'
@@ -406,7 +406,7 @@ const flowId = async ($: EngineInterface): Promise<string> => (await resolveFlow
 
 // Access refused (401/403: Connectors off, IP not allowed, key expired or revoked):
 // pause that loop, show it once, and try again every 30 s, so a fix made in the
-// dashboard (an owner turning Connectors on) is picked up by itself. /cm setup
+// dashboard (an owner turning Connectors on) is picked up by itself. /talkif setup
 // tries again at once.
 export const REFUSED_RETRY_MS = 30_000
 type Loop = `bridge:${string}`
@@ -630,7 +630,7 @@ type BridgeTurn = { requestId: string; callId: string; messages: unknown[]; kind
 // developer path TALKIF_BRIDGE_KEY and TALKIF_<NAME>_BRIDGE_KEY for others (e.g. an
 // organization). The session registers in each, so a call in any of them reaches it.
 // accountName: the account's display name as the backend sends it (register answer, else
-// the consent read of /cm setup); until it does, the bridge is shown by its slot name.
+// the consent read of /talkif setup); until it does, the bridge is shown by its slot name.
 // timer: the wait before this bridge's next poll (none while a poll runs); wakeBridges cuts it short.
 // received: the last call_ended item got, confirmed on the next poll (the server sends it until then).
 // callEnds: the server said it sends call outcomes (false on an older server: no transcripts arrive).
@@ -768,10 +768,10 @@ const errorCode = (text: string): string | undefined => {
   return undefined
 }
 
-/** /cm ring: list who call_me may ring; /cm ring <number | name> picks them for every session here. */
+/** /talkif ring: list who call_me may ring; /talkif ring <number | name> picks them for every session here. */
 async function cmRing($: EngineInterface, arg: string): Promise<string> {
   const bridge = personalBridge()
-  if (!bridge) return setupProblem ? problemText(setupProblem) : 'The Talkif plugin has no API key yet: /cm setup shows what is missing.'
+  if (!bridge) return setupProblem ? problemText(setupProblem) : 'The Talkif plugin has no API key yet: /talkif setup shows what is missing.'
   const res = await bridgeFetch($, bridge, '/ring-targets', 'GET')
   if (!res.ok) return `Talkif did not list the people: ${errorDetail(res.text)}`
   const list = parseRingTargets(JSON.parse(res.text))
@@ -779,10 +779,10 @@ async function cmRing($: EngineInterface, arg: string): Promise<string> {
   const current: unknown = await $.store.get(ringStoreKey(url))
   if (!arg) {
     const now = isRingTarget(current) ? `Now: ${current.name}.` : list.length === 1 ? `Now: ${list[0].name}, the only one.` : 'Nobody picked yet.'
-    return [...list.map((t, i) => `${i + 1}. ${t.name}`), `Pick with /cm ring <number or name>. ${now}`].join('\n')
+    return [...list.map((t, i) => `${i + 1}. ${t.name}`), `Pick with /talkif ring <number or name>. ${now}`].join('\n')
   }
   const picked = chooseRingTarget(list, arg)
-  if (!picked) return `No single person matches "${arg}". /cm ring lists them.`
+  if (!picked) return `No single person matches "${arg}". /talkif ring lists them.`
   await $.store.set(ringStoreKey(url), picked)
   return `call_me now rings ${picked.name}'s phone, from every session on this computer.`
 }
@@ -945,7 +945,7 @@ async function bridgeRegister($: EngineInterface, bridge: Bridge): Promise<boole
   if (bridge.session && lastDescribed === 0) describeSelf($).catch(err => $.ui.log(`bridge: describe failed: ${String(err)}`))
   // Which other sessions are working right now, for this session's context.
   if (bridge.session) refreshPeers($).catch(() => undefined)
-  // Once: the flow's name for /cm ("Call <flow> in the Talkif app"). A missing flow shows in /cm setup.
+  // Once: the flow's name for /talkif ("Call <flow> in the Talkif app"). A missing flow shows in /talkif setup.
   if (bridge.session && !flow) {
     await resolveFlow($)
       .then(() => refreshStatus($))
@@ -1343,7 +1343,7 @@ async function bridgeAnswer($: EngineInterface, bridge: Bridge, turn: BridgeTurn
 }
 
 // One poll per timer dispatch; each re-arms the next, so no dispatch runs forever.
-// /cm switches. This session: 'on' / 'off', or undefined to follow the default.
+// /talkif switches. This session: 'on' / 'off', or undefined to follow the default.
 // All sessions (the plugin's store, one file every session reads): 'allOff' turns
 // the bridge off everywhere, 'defaultOff' makes new sessions start off.
 let sessionSwitch: 'on' | 'off' | undefined
@@ -1355,13 +1355,13 @@ async function leaveBridge($: EngineInterface) {
   for (const bridge of bridges) {
     if (!bridge.session) continue
     await bridgeFetch($, bridge, `/${bridge.session}`, 'DELETE').catch(() => undefined)
-    await trace($, 'out', bridge.name, 'left', 'switched off with /cm')
+    await trace($, 'out', bridge.name, 'left', 'switched off with /talkif')
     bridge.session = undefined
   }
   await refreshStatus($)
 }
 
-// /cm setup's details: which accounts, which folders, and the on/off switches.
+// /talkif setup's details: which accounts, which folders, and the on/off switches.
 async function setupDetails($: EngineInterface): Promise<string[]> {
   const allOff = (await $.store.get('allOff')) === true
   const defaultOff = (await $.store.get('defaultOff')) === true
@@ -1373,14 +1373,14 @@ async function setupDetails($: EngineInterface): Promise<string[]> {
     lines.push(`Accounts: ${accountsText(names)} (${joined === bridges.length ? 'connected' : joined === 0 ? 'not connected yet' : `${joined} of ${bridges.length} connected`})`)
   }
   lines.push(folders.length ? `Folders: only sessions under ${folders.join(', ')}` : 'Folders: every session (set folders in /config → talkif to limit)')
-  lines.push(`This session: ${sessionSwitch ? `turned ${sessionSwitch} with /cm ${sessionSwitch}` : 'follows the default'}`)
-  lines.push(`All sessions: ${allOff ? 'off (/cm on all turns them back on)' : 'on'}. New sessions start ${defaultOff ? 'off' : 'on'}.`)
+  lines.push(`This session: ${sessionSwitch ? `turned ${sessionSwitch} with /talkif ${sessionSwitch}` : 'follows the default'}`)
+  lines.push(`All sessions: ${allOff ? 'off (/talkif on all turns them back on)' : 'on'}. New sessions start ${defaultOff ? 'off' : 'on'}.`)
   return lines
 }
 
-// /cm setup: each thing a user must have, checked against the backend, with the
+// /talkif setup: each thing a user must have, checked against the backend, with the
 // next step for the first one missing. Reads only, then clears what it found
-// stale: a "no Connectors flow" or refused pause is tried again at once, so /cm
+// stale: a "no Connectors flow" or refused pause is tried again at once, so /talkif
 // right after it shows the same live state (connecting, then on).
 type Probe = { status: number; text: string; body: unknown }
 
@@ -1411,7 +1411,7 @@ async function cmSetup($: EngineInterface): Promise<string> {
   return [setupReport(checks), ...(await setupDetails($)), '', cmLines(after)].join('\n')
 }
 
-// After a wake: give the bridges a moment to register, so the line /cm setup ends
+// After a wake: give the bridges a moment to register, so the line /talkif setup ends
 // with is the live one (on), not "connecting".
 const WAKE_SETTLE_MS = 3_000
 
@@ -1478,7 +1478,7 @@ async function setupChecks($: EngineInterface): Promise<Check[]> {
   if (typeof listed === 'string' || listed.status !== 200) {
     checks.push(
       typeof listed === 'string'
-        ? { name: 'Flow', ok: false, detail: listed.slice(0, 160), next: 'Try /cm setup again in a minute.' }
+        ? { name: 'Flow', ok: false, detail: listed.slice(0, 160), next: 'Try /talkif setup again in a minute.' }
         : failedProbe('Flow', 'Flows (read)', listed.status, listed.text),
     )
     return checks
@@ -1552,7 +1552,7 @@ async function cmRun($: EngineInterface, args: string, columns: number): Promise
   if (a === 'ring') return cmRing($, b ?? '')
   if (a === 'share') {
     const level = parseSharing(b)
-    if (!level) return `Usage: /cm share ${SHARING_LEVELS.join(' | ')}. Now: ${sessionSharing ?? optSharing}.`
+    if (!level) return `Usage: /talkif share ${SHARING_LEVELS.join(' | ')}. Now: ${sessionSharing ?? optSharing}.`
     sessionSharing = level
     const results = await Promise.all(
       bridges
@@ -1611,7 +1611,7 @@ async function bridgePoll($: EngineInterface, bridge: Bridge) {
   const loop: Loop = `bridge:${bridge.name}`
   try {
     if (!(await bridgeEnabled($))) {
-      // Switched off (/cm): out of the bridge; look again shortly in case it is switched back on.
+      // Switched off (/talkif): out of the bridge; look again shortly in case it is switched back on.
       await leaveBridge($)
       schedule($, bridge, OFF_CHECK_MS)
       return
@@ -1684,7 +1684,7 @@ async function bridgeStart($: EngineInterface) {
   watchSwitch($)
 }
 
-// /cm off (all) takes effect within SWITCH_CHECK_MS instead of after the poll in flight.
+// /talkif off (all) takes effect within SWITCH_CHECK_MS instead of after the poll in flight.
 const SWITCH_CHECK_MS = 2_000
 function watchSwitch($: EngineInterface) {
   $.clock.after(SWITCH_CHECK_MS, async () => {
@@ -1769,7 +1769,7 @@ async function ringOwner($: EngineInterface, briefing: string, person?: RingTarg
   const bridge = personalBridge()
   if (!bridge) return { ok: false, reason: setupProblem ? problemText(setupProblem) : 'no key for the personal account (TALKIF_BRIDGE_KEY)' }
   const { url } = await loadEnv($)
-  // One call can ring someone else (call_me `to`); otherwise the person picked with /cm ring.
+  // One call can ring someone else (call_me `to`); otherwise the person picked with /talkif ring.
   const target: unknown = person ?? (await $.store.get(ringStoreKey(url)))
   const res = await bridgeFetch($, bridge, '/calls', 'POST', {
     flowId: await flowId($),
@@ -1781,7 +1781,7 @@ async function ringOwner($: EngineInterface, briefing: string, person?: RingTarg
   if (!res.ok) {
     if (errorCode(res.text) === 'ring_target_required') return { ok: false, reason: RING_PICK_HINT }
     if (res.status === 404 && isRingTarget(target)) {
-      return { ok: false, reason: `${target.name} can no longer take calls in this Talkif account: pick again with /cm ring.` }
+      return { ok: false, reason: `${target.name} can no longer take calls in this Talkif account: pick again with /talkif ring.` }
     }
     return { ok: false, reason: `ring → ${res.status}: ${res.text.slice(0, 160)}` }
   }
@@ -1809,14 +1809,14 @@ const scope = new CallTaskScope()
 
 // ---- Is it on? One status line, refreshed whenever what it shows can change ----
 
-async function offReason($: EngineInterface): Promise<CallMeState['off']> {
+async function offReason($: EngineInterface): Promise<TalkifState['off']> {
   if ((await $.store.get('allOff')) === true) return 'all'
   if (sessionSwitch) return sessionSwitch === 'off' ? 'session' : undefined
   return (await $.store.get('defaultOff')) === true ? 'default' : undefined
 }
 
-// The one live state the status line, /cm and the end of /cm setup all read.
-async function currentState($: EngineInterface): Promise<CallMeState> {
+// The one live state the status line, /talkif and the end of /talkif setup all read.
+async function currentState($: EngineInterface): Promise<TalkifState> {
   return {
     problem: setupProblem ?? [...paused.values()][0],
     off: await offReason($),
@@ -1979,7 +1979,7 @@ export const register: Register = (on, options) => {
     const add = (what: string, done: Promise<unknown>) => done.catch((err: unknown) => {
       refused.push(`${what} (${String(err).replace(/^(HooksError: )?/, '').slice(0, 160)})`)
     })
-    await add('/cm', $.command.register({ name: 'cm', description: 'Talkif: is this session reachable by phone? /cm help lists the commands.' }))
+    await add('/talkif', $.command.register({ name: 'talkif', description: 'Talkif: is this session reachable by phone? /talkif help lists the commands.' }))
     await add(TOOL, $.tool.register({
       name: TOOL,
       isDeferred: false,
@@ -2113,7 +2113,7 @@ export const register: Register = (on, options) => {
     }
   }).catch(() => ({ result: 'call_me failed inside the mod.', isError: true }))
 
-  on('command.run', { command: 'cm' }, async ($, e) => ({ text: await cmRun($, e.args, e.presentation.columns) }))
+  on('command.run', { command: 'talkif' }, async ($, e) => ({ text: await cmRun($, e.args, e.presentation.columns) }))
 
 
   on('ui.render', { component: 'Pane', requestId: TRAFFIC_PANE }, async ($, e) => {

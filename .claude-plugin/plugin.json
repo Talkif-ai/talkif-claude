@@ -1,6 +1,6 @@
 {
   "name": "talkif",
-  "version": "0.30.1",
+  "version": "0.30.2",
   "description": "Talkif for Claude Code: the Talkif API as tools, your sessions reachable by voice through the Talkif app, tasks between sessions, and calls that ring you when a session needs you.",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -19,19 +19,19 @@
     "flowId": {
       "type": "string",
       "title": "Flow",
-      "description": "The id of the flow your calls run on. Empty: the first published flow with a Connectors node (/cm setup shows which).",
+      "description": "The id of the flow your calls run on. Empty: the first published flow with a Connectors node (/talkif setup shows which).",
       "default": ""
     },
     "folders": {
       "type": "string",
       "title": "Folders",
-      "description": "Only sessions in these folders join (comma-separated, ~/ allowed). Empty: every session; /cm on|off still decide.",
+      "description": "Only sessions in these folders join (comma-separated, ~/ allowed). Empty: every session; /talkif on|off still decide.",
       "default": ""
     },
     "debug": {
       "type": "boolean",
       "title": "Debug traffic pane",
-      "description": "Record this session's call-me traffic and show it with /cm traffic.",
+      "description": "Record this session's Talkif traffic and show it with /talkif traffic.",
       "default": false
     },
     "parallel": {
@@ -59,7 +59,7 @@
     "sharing": {
       "type": "string",
       "title": "Colleagues in your organization",
-      "description": "In a Talkif organization, what people with the member role may do with your sessions on their calls. private: nothing. ask: ask questions, answered read-only. work: ask and give tasks. Owners and admins always reach your sessions fully; agents (call staff) never. Change one session with /cm share.",
+      "description": "In a Talkif organization, what people with the member role may do with your sessions on their calls. private: nothing. ask: ask questions, answered read-only. work: ask and give tasks. Owners and admins always reach your sessions fully; agents (call staff) never. Change one session with /talkif share.",
       "options": [
         "private",
         "ask",

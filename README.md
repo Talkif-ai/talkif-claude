@@ -40,7 +40,7 @@ Or at the Claude Code prompt: `/plugin marketplace add Talkif-ai/talkif-claude`,
 Then run:
 
 ```
-/cm setup
+/talkif setup
 ```
 
 When everything is ready you see:
@@ -63,7 +63,7 @@ All sessions: on. New sessions start on.
 
 ☎ On. This session can be reached through Acme.
 Call "Claude Code calls" in the Talkif app.
-More: /cm help
+More: /talkif help
 ```
 
 If something is missing, it says what to do next, for example:
@@ -72,10 +72,10 @@ If something is missing, it says what to do next, for example:
 [missing] Connectors: not turned on for this account
 
 Next step: An owner or admin of the Talkif account turns Connectors on in the dashboard: Developer → Integrations.
-Run /cm setup again after each step.
+Run /talkif setup again after each step.
 ```
 
-`/cm setup` only reads. It never prints your key.
+`/talkif setup` only reads. It never prints your key.
 
 ## Is it on?
 
@@ -86,24 +86,24 @@ Under the prompt, the plugin shows one status line:
 | `☎ Talkif: on · Acme` | this session can be reached through your voice agent, in the account named after the dot |
 | `☎ Talkif: on a call` | a call is ringing or running for this session, or a task from a call is running or queued |
 | `☎ Talkif: connecting…` | the connection to Talkif is coming up, or dropped and retries by itself |
-| `☎ Talkif: off` | this session is switched off (`/cm on` turns it back on) |
-| `☎ Talkif: not set up — run /cm setup` | no API key, a setup problem, or Talkif refused the key: `/cm` says why, `/cm setup` checks everything |
+| `☎ Talkif: off` | this session is switched off (`/talkif on` turns it back on) |
+| `☎ Talkif: not set up — run /talkif setup` | no API key, a setup problem, or Talkif refused the key: `/talkif` says why, `/talkif setup` checks everything |
 
-`/cm` gives the same answer in two or three lines, for example:
+`/talkif` gives the same answer in two or three lines, for example:
 
 ```
 ☎ On. This session can be reached through Acme.
 Call "Claude Code calls" in the Talkif app.
-More: /cm help
+More: /talkif help
 ```
 
 ```
 ☎ Not set up: Connectors are not turned on for your Talkif account.
 Next: An owner or admin turns them on in the Talkif dashboard (Developer → Integrations).
-More: /cm help
+More: /talkif help
 ```
 
-When Talkif refuses the key (Connectors off, a missing scope, an IP allowlist), the plugin tries again every 30 seconds and comes back on by itself once it is fixed. `/cm setup` tries again at once.
+When Talkif refuses the key (Connectors off, a missing scope, an IP allowlist), the plugin tries again every 30 seconds and comes back on by itself once it is fixed. `/talkif setup` tries again at once.
 
 ## Using it
 
@@ -159,29 +159,29 @@ A task can be handed on from session to session (and to connected bots such as a
 ## Who can reach what
 
 - **Personal account:** only you reach your sessions and connectors.
-- **Organization:** every owner, admin and member of the organization on a proven call reaches all of its connectors, your coding sessions included: they can ask questions and give tasks. Each question or task names who asked by their Talkif profile name ("Question from Ada on a call", "Task from Ada on a call"), and the session's traffic shows it too. A task from someone else never rings you back. Sessions running a call-me older than 0.24.0 stay reachable by you alone.
+- **Organization:** every owner, admin and member of the organization on a proven call reaches all of its connectors, your coding sessions included: they can ask questions and give tasks. Each question or task names who asked by their Talkif profile name ("Question from Ada on a call", "Task from Ada on a call"), and the session's traffic shows it too. A task from someone else never rings you back. Sessions running the older call-me plugin before 0.24.0 stay reachable by you alone.
 - **Tasks from a call stay read-only by default**, whoever gives them (see `callTasks`).
 - **Callers who are not proven** (phone numbers, embeds, API keys) reach nothing, except connectors you made public, and those only for look-ups.
 ## Commands
 
-`/cm help` shows this list.
+`/talkif help` shows this list.
 
 | Command | What it does |
 |---|---|
-| `/cm` | is this session reachable? |
-| `/cm on` · `/cm off` | make this session reachable / not reachable |
-| `/cm on all` · `/cm off all` | all open sessions on / off |
-| `/cm default on` · `/cm default off` | how new sessions start |
-| `/cm setup` | check the connection and show what's missing (also shows the key, flow, accounts and folders in use) |
-| `/cm traffic` | see what went back and forth (needs the `debug` option) |
-| `/cm ring` | list who call_me may ring; `/cm ring <number or name>` picks whose phone rings (needed when several people share the Talkif account) |
+| `/talkif` | is this session reachable? |
+| `/talkif on` · `/talkif off` | make this session reachable / not reachable |
+| `/talkif on all` · `/talkif off all` | all open sessions on / off |
+| `/talkif default on` · `/talkif default off` | how new sessions start |
+| `/talkif setup` | check the connection and show what's missing (also shows the key, flow, accounts and folders in use) |
+| `/talkif traffic` | see what went back and forth (needs the `debug` option) |
+| `/talkif ring` | list who call_me may ring; `/talkif ring <number or name>` picks whose phone rings (needed when several people share the Talkif account) |
 
 Advanced:
 
 | Command | What it does |
 |---|---|
-| `/cm publish` | write the call prompt into your flow's Connectors node (the key also needs `flows:write`) |
-| `/cm latency` | time a spoken answer |
+| `/talkif publish` | write the call prompt into your flow's Connectors node (the key also needs `flows:write`) |
+| `/talkif latency` | time a spoken answer |
 
 ## Options
 
@@ -193,11 +193,11 @@ Change them in `/config` → talkif. The API key is in `/plugin` → Installed �
 | `apiUrl` | empty | API URL (advanced). Empty: Talkif (https://api.talkif.ai). Only change it if Talkif support tells you to |
 | `flowId` | empty | the flow your calls run on. Empty: the first published flow with a Connectors node |
 | `folders` | empty | only sessions in these folders join, comma-separated (`~/work/app, ~/notes`). Empty: every session |
-| `sharing` | `ask` | in an organization, what other members may do with your sessions: `private`, `ask` (questions only) or `work` (questions and tasks); `/cm share` changes one session |
+| `sharing` | `ask` | in an organization, what other members may do with your sessions: `private`, `ask` (questions only) or `work` (questions and tasks); `/talkif share` changes one session |
 | `callTasks` | `read-only` | `read-only`: tasks from a call can only read. `session`: they use the session's own permissions |
 | `callback` | on | ring you when a task from a call ends after you hung up |
 | `parallel` | off | queue more tasks from a call while one runs, instead of saying "still on the last task" |
-| `debug` | off | record this session's traffic for `/cm traffic` |
+| `debug` | off | record this session's traffic for `/talkif traffic` |
 
 ## Other connectors
 
@@ -228,14 +228,14 @@ It only answers questions, never takes tasks, and only you can reach it (it runs
 | You see | Fix |
 |---|---|
 | `no Talkif API key is set` | Create a key (step 1) and paste it in `/plugin` → Installed → talkif → Configure options. |
-| `Connectors are not turned on for your Talkif account` | An owner or admin turns them on in the dashboard: Developer → Integrations. The plugin notices within 30 seconds, or at once with `/cm setup`. |
-| `the API key lacks a scope it needs` | Edit the key in Developer → Credentials and add the scope `/cm setup` names. |
+| `Connectors are not turned on for your Talkif account` | An owner or admin turns them on in the dashboard: Developer → Integrations. The plugin notices within 30 seconds, or at once with `/talkif setup`. |
+| `the API key lacks a scope it needs` | Edit the key in Developer → Credentials and add the scope `/talkif setup` names. |
 | `the API key lacks a scope it needs`, although the key has **Full access** | Full access does not include Connectors: it is granted by name only. In Developer → Credentials, untick Full access, tick All on every row including **session_bridge**, and save. The key itself stays the same. |
 | `this computer's IP address is not on the API key's allowlist` | Add your current IP address to the key, or remove the restriction. The plugin checks again every 30 seconds. |
 | `your Talkif account has no published flow with a Connectors node` | Add a Connectors node to an agent in the flow builder and publish it, or set `flowId`. |
 | `the API key was refused (expired or revoked?)` | Create a new key and paste it in Configure options. |
-| `/cm` is an unknown command in a session | The session's folder is not in the `folders` option. Add it, or empty the option. |
-| Your call does not reach the session | Call from the Talkif app while signed in, and check `/cm` says `☎ On`. |
+| `/talkif` is an unknown command in a session | The session's folder is not in the `folders` option. Add it, or empty the option. |
+| Your call does not reach the session | Call from the Talkif app while signed in, and check `/talkif` says `☎ On`. |
 | `/plugin` lists **talkif** more than once | One is the plugin, the others its tools: Claude Code shows the plugin's own tools (`call_me` and the task tools) as an MCP server named after the plugin, and the bundled Talkif API server as a second one. Same plugin, nothing extra to connect. |
 | Talkif tools appear twice, or `talkif_submit` from two places | You also added Talkif's MCP server yourself (for example `claude mcp add talkif …`). Remove that one: the plugin brings it. |
 | The bundled Talkif server asks you to sign in | The API key option is empty. Paste the key in `/plugin` → Installed → talkif → Configure options; signing in through the browser gives no Talkif tools here. |
