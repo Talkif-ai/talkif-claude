@@ -1,0 +1,78 @@
+{
+  "name": "talkif",
+  "version": "0.30.0",
+  "description": "Talkif for Claude Code: the Talkif API as tools, your sessions reachable by voice through the Talkif app, tasks between sessions, and calls that ring you when a session needs you.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "apiKey": {
+      "type": "string",
+      "title": "Talkif API key",
+      "description": "From the Talkif dashboard (Developer → Credentials). Scopes: Connectors and Flows (read) for calls and sessions; Calls (read) for the transcript of a call to a teammate; plus the scopes of the Talkif tools you want Claude to use. Stored in your keychain, never in settings.json.",
+      "sensitive": true
+    },
+    "apiUrl": {
+      "type": "string",
+      "title": "API URL (advanced)",
+      "description": "Leave empty for Talkif (https://api.talkif.ai). Only change it if Talkif support tells you to.",
+      "default": ""
+    },
+    "flowId": {
+      "type": "string",
+      "title": "Flow",
+      "description": "The id of the flow your calls run on. Empty: the first published flow with a Connectors node (/cm setup shows which).",
+      "default": ""
+    },
+    "folders": {
+      "type": "string",
+      "title": "Folders",
+      "description": "Only sessions in these folders join (comma-separated, ~/ allowed). Empty: every session; /cm on|off still decide.",
+      "default": ""
+    },
+    "debug": {
+      "type": "boolean",
+      "title": "Debug traffic pane",
+      "description": "Record this session's call-me traffic and show it with /cm traffic.",
+      "default": false
+    },
+    "parallel": {
+      "type": "boolean",
+      "title": "Queue tasks while busy",
+      "description": "Accept more tasks from a call while one runs (they queue) instead of declining.",
+      "default": false
+    },
+    "callback": {
+      "type": "boolean",
+      "title": "Ring back when a call task ends",
+      "description": "When a task given on a call finishes or gets stuck after the call ended, ring you with the result.",
+      "default": true
+    },
+    "callTasks": {
+      "type": "string",
+      "title": "Tasks from calls",
+      "description": "read-only: while a task given on a call runs, tools that change anything are refused and the session reports what it would change. session: the session's own Claude Code permissions apply. The plugin never grants a permission in either mode.",
+      "options": [
+        "read-only",
+        "session"
+      ],
+      "default": "read-only"
+    },
+    "sharing": {
+      "type": "string",
+      "title": "Colleagues in your organization",
+      "description": "In a Talkif organization, what people with the member role may do with your sessions on their calls. private: nothing. ask: ask questions, answered read-only. work: ask and give tasks. Owners and admins always reach your sessions fully; agents (call staff) never. Change one session with /cm share.",
+      "options": [
+        "private",
+        "ask",
+        "work"
+      ],
+      "default": "ask"
+    }
+  },
+  "author": {
+    "name": "Talkif"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/Talkif-ai/talkif-claude",
+  "homepage": "https://github.com/Talkif-ai/talkif-claude",
+  "privacyPolicyUrl": "https://trust.talkif.ai/privacy"
+}

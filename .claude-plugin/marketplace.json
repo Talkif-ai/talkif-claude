@@ -1,0 +1,13 @@
+{
+  "name": "talkif-claude",
+  "owner": {
+    "name": "Talkif"
+  },
+  "plugins": [
+    {
+      "name": "talkif",
+      "source": "./"
+    }
+  ],
+  "description": "Talkif for Claude Code: the Talkif API as tools, and your sessions reachable by voice through the Talkif app."
+}

@@ -1,0 +1,9 @@
+{
+  "name": "talkif-claude",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "test": "claude plugin test .",
+    "validate": "claude plugin validate --strict ."
+  }
+}
