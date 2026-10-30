@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.30.3 — 2026-10-30
+
+- **`/talkif` speaks plainly.** No phone icon in front of every line. When the plugin cannot connect it says "Talkif is not connected" with the reason, never "not set up" when a key is set: a key without the permissions it needs reads "your API key is set, but it is missing permissions", with where to fix it (app.talkif.ai → Developer → Credentials, Connectors and Flows (read)) and that the plugin connects by itself within 30 seconds.
+- The status line reads `Talkif: on`, `Talkif: not connected — run /talkif`, and so on.
+
 ## 0.30.2 — 2026-10-30
 
 - **The command is `/talkif`.** `/cm` was left over from the call-me name; every command, hint and message now says `/talkif` (`/talkif setup`, `/talkif on`, `/talkif ring`, `/talkif help`, …). There is no `/cm` any more.

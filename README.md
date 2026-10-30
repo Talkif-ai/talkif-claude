@@ -61,7 +61,7 @@ Folders: every session (set folders in /config → talkif to limit)
 This session: follows the default
 All sessions: on. New sessions start on.
 
-☎ On. This session can be reached through Acme.
+On. This session can be reached through Acme.
 Call "Claude Code calls" in the Talkif app.
 More: /talkif help
 ```
@@ -83,23 +83,23 @@ Under the prompt, the plugin shows one status line:
 
 | Status line | What it means |
 |---|---|
-| `☎ Talkif: on · Acme` | this session can be reached through your voice agent, in the account named after the dot |
-| `☎ Talkif: on a call` | a call is ringing or running for this session, or a task from a call is running or queued |
-| `☎ Talkif: connecting…` | the connection to Talkif is coming up, or dropped and retries by itself |
-| `☎ Talkif: off` | this session is switched off (`/talkif on` turns it back on) |
-| `☎ Talkif: not set up — run /talkif setup` | no API key, a setup problem, or Talkif refused the key: `/talkif` says why, `/talkif setup` checks everything |
+| `Talkif: on · Acme` | this session can be reached through your voice agent, in the account named after the dot |
+| `Talkif: on a call` | a call is ringing or running for this session, or a task from a call is running or queued |
+| `Talkif: connecting…` | the connection to Talkif is coming up, or dropped and retries by itself |
+| `Talkif: off` | this session is switched off (`/talkif on` turns it back on) |
+| `Talkif: not connected — run /talkif` | no API key, a setup problem, or Talkif refused the key: `/talkif` says why, `/talkif setup` checks everything |
 
 `/talkif` gives the same answer in two or three lines, for example:
 
 ```
-☎ On. This session can be reached through Acme.
+On. This session can be reached through Acme.
 Call "Claude Code calls" in the Talkif app.
 More: /talkif help
 ```
 
 ```
-☎ Not set up: Connectors are not turned on for your Talkif account.
-Next: An owner or admin turns them on in the Talkif dashboard (Developer → Integrations).
+Talkif is not connected: Connectors are not turned on for your Talkif account.
+Next: An owner or admin turns them on in app.talkif.ai under Developer → Integrations. The plugin checks again every 30 seconds.
 More: /talkif help
 ```
 
@@ -235,7 +235,7 @@ It only answers questions, never takes tasks, and only you can reach it (it runs
 | `your Talkif account has no published flow with a Connectors node` | Add a Connectors node to an agent in the flow builder and publish it, or set `flowId`. |
 | `the API key was refused (expired or revoked?)` | Create a new key and paste it in Configure options. |
 | `/talkif` is an unknown command in a session | The session's folder is not in the `folders` option. Add it, or empty the option. |
-| Your call does not reach the session | Call from the Talkif app while signed in, and check `/talkif` says `☎ On`. |
+| Your call does not reach the session | Call from the Talkif app while signed in, and check `/talkif` says `On`. |
 | `/plugin` lists **talkif** more than once | One is the plugin, the others its tools: Claude Code shows the plugin's own tools (`call_me` and the task tools) as an MCP server named after the plugin, and the bundled Talkif API server as a second one. Same plugin, nothing extra to connect. |
 | Talkif tools appear twice, or `talkif_submit` from two places | You also added Talkif's MCP server yourself (for example `claude mcp add talkif …`). Remove that one: the plugin brings it. |
 | The bundled Talkif server asks you to sign in | The API key option is empty. Paste the key in `/plugin` → Installed → talkif → Configure options; signing in through the browser gives no Talkif tools here. |

@@ -46,8 +46,8 @@ export type SetupOptions = { apiKey: string; apiUrl: string }
 const PASTE_KEY = 'paste it in /plugin → talkif → Configure options'
 
 export const NO_KEY_PROBLEM: Problem = {
-  reason: 'no Talkif API key is set',
-  next: `create one in the Talkif dashboard (Developer → Credentials, scopes Connectors and Flows read) and ${PASTE_KEY}`,
+  reason: 'no API key is set yet',
+  next: `in app.talkif.ai open Developer → Credentials, create an API key with the permissions Connectors and Flows (read), and ${PASTE_KEY}`,
 }
 
 /**
@@ -179,10 +179,10 @@ export function folderAllowed(cwd: string, folders: readonly string[]): boolean 
 export function refusalReason(status: number, text: string): Problem | undefined {
   if (status !== 401 && status !== 403) return undefined
   if (text.includes('connectors_consent_required')) {
-    return { reason: 'Connectors are not turned on for your Talkif account', next: 'an owner or admin turns them on in the Talkif dashboard (Developer → Integrations)' }
+    return { reason: 'Connectors are not turned on for your Talkif account', next: 'an owner or admin turns them on in app.talkif.ai under Developer → Integrations. The plugin checks again every 30 seconds' }
   }
   if (text.includes('api_key_insufficient_scope')) {
-    return { reason: 'the API key lacks a scope it needs', next: 'add the scopes Connectors and Flows (read) to the key in Developer → Credentials' }
+    return { reason: 'your API key is set, but it is missing permissions', next: 'in app.talkif.ai open Developer → Credentials, edit the key and turn on Connectors and Flows (read). The plugin checks again every 30 seconds and connects by itself' }
   }
   if (text.includes('api_key_ip_restricted')) {
     return { reason: "this computer's IP address is not on the API key's allowlist", next: 'add it to the key in Developer → Credentials, or remove the restriction' }
@@ -319,29 +319,29 @@ const sentence = (text: string): string => {
 }
 
 /**
- * The status line; the first matching state wins: not set up, off, on a call,
+ * The status line; the first matching state wins: not connected, off, on a call,
  * connecting (no account registered yet, or every one retrying), on.
  */
 export function statusText(state: TalkifState): string {
-  if (state.problem) return '☎ Talkif: not set up — run /talkif setup'
-  if (state.off) return '☎ Talkif: off'
-  if (state.onCall) return '☎ Talkif: on a call'
-  if (state.offline) return '☎ Talkif: offline, retrying…'
-  if (state.registered.length === 0) return '☎ Talkif: connecting…'
+  if (state.problem) return 'Talkif: not connected — run /talkif'
+  if (state.off) return 'Talkif: off'
+  if (state.onCall) return 'Talkif: on a call'
+  if (state.offline) return 'Talkif: offline, retrying…'
+  if (state.registered.length === 0) return 'Talkif: connecting…'
   const named = [...new Set(state.registered.filter((n): n is string => n !== undefined))]
-  return named.length ? `☎ Talkif: on · ${named.join(', ')}` : '☎ Talkif: on'
+  return named.length ? `Talkif: on · ${named.join(', ')}` : 'Talkif: on'
 }
 
 export const MORE = 'More: /talkif help'
 
 /** /talkif: two or three lines, in the same order as statusText. */
 export function cmLines(state: TalkifState): string {
-  if (state.problem) return [`☎ Not set up: ${state.problem.reason}.`, `Next: ${sentence(state.problem.next)}`, MORE].join('\n')
-  if (state.off) return [`☎ Off. Turn it on with ${state.off === 'all' ? '/talkif on all' : '/talkif on'}.`, MORE].join('\n')
-  if (state.offline && !state.onCall) return ['☎ Offline: Talkif cannot be reached from here. The plugin keeps retrying by itself.', MORE].join('\n')
-  if (state.registered.length === 0) return ['☎ Connecting…', MORE].join('\n')
+  if (state.problem) return [`Talkif is not connected: ${state.problem.reason}.`, `Next: ${sentence(state.problem.next)}`, MORE].join('\n')
+  if (state.off) return [`Off. Turn it on with ${state.off === 'all' ? '/talkif on all' : '/talkif on'}.`, MORE].join('\n')
+  if (state.offline && !state.onCall) return ['Offline: Talkif cannot be reached from here. The plugin keeps retrying by itself.', MORE].join('\n')
+  if (state.registered.length === 0) return ['Connecting…', MORE].join('\n')
   const call = state.flowName ? `Call "${state.flowName}" in the Talkif app.` : 'Call your Talkif agent in the Talkif app.'
-  const head = state.onCall ? '☎ On a call.' : '☎ On.'
+  const head = state.onCall ? 'On a call.' : 'On.'
   return [`${head} This session can be reached through ${accountsText(state.registered)}.`, call, MORE].join('\n')
 }
 
