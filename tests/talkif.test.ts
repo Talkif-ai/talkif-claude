@@ -184,8 +184,8 @@ test('refusals say what to do', async () => {
     reason: 'Connectors are not turned on for your Talkif account',
     next: 'an owner or admin turns them on in app.talkif.ai under Developer → Integrations. The plugin checks again every 30 seconds',
   })
-  expect(refusalReason(403, '{"code":"api_key_insufficient_scope"}')?.next).toMatch(/Developer → Credentials/)
-  expect(refusalReason(403, '{"code":"api_key_insufficient_scope"}')?.reason).toMatch(/is set, but it is missing permissions/)
+  expect(refusalReason(403, '{"code":"api_key_insufficient_scope"}')?.next).toMatch(/run \/talkif/)
+  expect(refusalReason(403, '{"code":"api_key_insufficient_scope"}')?.reason).toMatch(/is set, but it is missing a permission/)
   expect(refusalReason(403, '{"code":"api_key_ip_restricted"}')?.reason).toMatch(/allowlist/)
   expect(refusalReason(401, '')?.reason).toMatch(/refused/)
   expect(refusalReason(500, 'connectors_consent_required')).toBe(undefined)
@@ -211,9 +211,9 @@ test('setup: the consent answer becomes a check with its next step', async () =>
 })
 
 test('setup: refused probes name the missing scope; the report leads with the first step', async () => {
-  expect(failedProbe('Flow', 'Flows (read)', 403, '{"code":"api_key_insufficient_scope"}').next).toMatch(/add the Flows \(read\) scope/)
+  expect(failedProbe('Flow', 'Read on the flows row', 403, '{"code":"api_key_insufficient_scope"}').next).toMatch(/tick Read on the flows row\. Full access does not include Connectors/)
   expect(failedProbe('Connectors', 'Connectors', 401, '').next).toBe(KEY_STEP)
-  expect(failedProbe('Flow', 'Flows (read)', 403, '{"code":"api_key_ip_restricted"}').detail).toMatch(/allowlist/)
+  expect(failedProbe('Flow', 'Read on the flows row', 403, '{"code":"api_key_ip_restricted"}').detail).toMatch(/allowlist/)
   const report = setupReport([
     { name: 'API key', ok: true, detail: 'from the apiKey option (keychain)' },
     { name: 'Connectors', ok: false, detail: 'not turned on for this account', next: CONNECTORS_STEP },
@@ -283,7 +283,7 @@ test('/talkif is two or three lines: on, off, connecting or not connected', asyn
   expect(cmLines(state({ off: 'all' }))).toBe('Off. Turn it on with /talkif on all.\nMore: /talkif help')
   expect(cmLines(state({ registered: [] }))).toBe('Connecting…\nMore: /talkif help')
   expect(cmLines(state({ problem: consentOff, off: 'all' }))).toBe(
-    'Talkif is not connected: Connectors are not turned on for your Talkif account.\n' +
+    'Not connected: Connectors are not turned on for your Talkif account.\n' +
       'Next: An owner or admin turns them on in app.talkif.ai under Developer → Integrations. The plugin checks again every 30 seconds.\nMore: /talkif help',
   )
   for (const s of [state({}), state({ off: 'all' }), state({ registered: [] }), state({ problem: consentOff })]) {
@@ -486,10 +486,6 @@ test('a refused bridge re-probes every 30 s and resumes once Connectors are on',
   const world = fakeTalkif(on)
   await startSession($)
   await clock.settle()
-  expect(await cm($, '')).toBe(
-    'Talkif is not connected: Connectors are not turned on for your Talkif account.\n' +
-      'Next: An owner or admin turns them on in app.talkif.ai under Developer → Integrations. The plugin checks again every 30 seconds.\nMore: /talkif help',
-  )
   // The owner turns Connectors on: within 30 s the session is reachable again, no command needed.
   world.consent = true
   await clock.advance(29_000)
@@ -505,7 +501,13 @@ test('/talkif setup clears a stale refusal at once, and /talkif agrees with it',
   const world = fakeTalkif(on)
   await startSession($)
   await clock.settle()
-  expect(await cm($, '')).toMatch(/^Talkif is not connected: Connectors are not turned on/)
+  // Not connected: a bare /talkif runs the checks at once and leads with what is missing.
+  const first = cm($, '')
+  await clock.advance(1_000)
+  const firstReport = await first
+  expect(firstReport).toMatch(/^Setup\n/)
+  expect(firstReport).toMatch(/\[missing\] Connectors: not turned on for this account/)
+  expect(firstReport).toMatch(/Next step: An owner or admin/)
   world.consent = true
   // No 30 s wait: setup itself re-registers, and ends with the live line.
   const setup = cm($, 'setup')

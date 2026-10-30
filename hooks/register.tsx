@@ -116,7 +116,7 @@ const TASK_TOOL_NAMES: ReadonlySet<string> = new Set(TASK_TOOLS.map(t => taskToo
 const PEERS_REFRESH_MS = 10 * 60_000
 // Sent as the User-Agent on every request to the backend and the bridge. Kept equal
 // to .claude-plugin/plugin.json's version: bump both together.
-export const VERSION = '0.30.3'
+export const VERSION = '0.30.4'
 const USER_AGENT = `talkif-claude/${VERSION}`
 // Debug pane: this session's bridge traffic, newest last (`/talkif traffic`; recorded only with the debug option).
 const TRAFFIC_PANE = 'talkif-traffic'
@@ -1401,6 +1401,14 @@ async function probe($: EngineInterface, url: string, key: string, path: string)
   }
 }
 
+/** /talkif while not connected: the checks and the next step only; /talkif setup adds the details. */
+async function cmFirstRun($: EngineInterface): Promise<string> {
+  const checks = await setupChecks($)
+  await wakeAll($)
+  const after = await currentState($)
+  return after.problem ? setupReport(checks) : cmLines(after)
+}
+
 async function cmSetup($: EngineInterface): Promise<string> {
   const checks = await setupChecks($)
   // A refusal the checks no longer see (an owner turned Connectors on, a key was
@@ -1471,7 +1479,7 @@ async function setupChecks($: EngineInterface): Promise<Check[]> {
       ? consentCheck(parsed)
       : consent.status === 200
         ? { name: 'Connectors', ok: false, detail: 'the backend gave an unexpected consent answer', next: 'Update the plugin (claude plugin update talkif@talkif-claude).' }
-        : failedProbe('Connectors', 'Connectors', consent.status, consent.text),
+        : failedProbe('Connectors', 'All on the session_bridge row (Connectors)', consent.status, consent.text),
   )
 
   const listed = await probe($, c.url, c.apiKey, '/flows/published?limit=100')
@@ -1479,7 +1487,7 @@ async function setupChecks($: EngineInterface): Promise<Check[]> {
     checks.push(
       typeof listed === 'string'
         ? { name: 'Flow', ok: false, detail: listed.slice(0, 160), next: 'Try /talkif setup again in a minute.' }
-        : failedProbe('Flow', 'Flows (read)', listed.status, listed.text),
+        : failedProbe('Flow', 'Read on the flows row', listed.status, listed.text),
     )
     return checks
   }
@@ -1492,7 +1500,7 @@ async function setupChecks($: EngineInterface): Promise<Check[]> {
       checks.push(
         missing || typeof one === 'string'
           ? { name: 'Flow', ok: false, detail: `the flowId option (${fromOption}) is not a flow in this account`, next: 'Fix flowId in /config → talkif, or empty it so the plugin picks the first published flow with a Connectors node.' }
-          : failedProbe('Flow', 'Flows (read)', one.status, one.text),
+          : failedProbe('Flow', 'Read on the flows row', one.status, one.text),
       )
       return checks
     }
@@ -1536,7 +1544,8 @@ async function cmRun($: EngineInterface, args: string, columns: number): Promise
   const words = args.trim().toLowerCase().split(/\s+/).filter(Boolean)
   const [a, b, extra] = words
   if (extra) return UNKNOWN_COMMAND
-  if (!a || (a === 'status' && !b)) return cmStatus($)
+  // Not connected: /talkif runs the setup checks at once and names what is missing.
+  if (!a || (a === 'status' && !b)) return (await currentState($)).problem ? cmFirstRun($) : cmStatus($)
   if (a === 'help' && !b) return cmHelp(columns)
   if (a === 'setup' && !b) return cmSetup($)
   if (a === 'traffic' && !b) {

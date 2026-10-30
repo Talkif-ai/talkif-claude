@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.30.4 — 2026-10-30
+
+- **`/talkif` sets itself up.** While the session is not connected, `/talkif` runs the setup checks at once, tries again right away, and leads with the one thing that is missing and where to fix it. No separate `/talkif setup` needed (it still exists, with more detail).
+- **Permissions named as the dashboard shows them.** A key needs All on the `session_bridge` row (Connectors) and Read on the `flows` row. Every message now says that Full access does not include Connectors, and that the other rows are greyed out until Full access is unticked.
+- Lines no longer start with "Talkif is …" after Claude Code's own "talkif:" label.
+
 ## 0.30.3 — 2026-10-30
 
 - **`/talkif` speaks plainly.** No phone icon in front of every line. When the plugin cannot connect it says "Talkif is not connected" with the reason, never "not set up" when a key is set: a key without the permissions it needs reads "your API key is set, but it is missing permissions", with where to fix it (app.talkif.ai → Developer → Credentials, Connectors and Flows (read)) and that the plugin connects by itself within 30 seconds.

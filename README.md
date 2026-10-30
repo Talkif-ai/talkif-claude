@@ -25,6 +25,8 @@ You need:
 | **Calls** (`calls:read`), optional | call_me gets the transcript of a call to a teammate (a call to you comes back without it) |
 | anything else, optional | the Talkif tools Claude may use: each tool is listed only when the key has its scope (for example **Calls** to read call history, **Flows (write)** to edit voice agents) |
 
+**Full access does not include Connectors.** If you tick Full access, the dashboard greys out the other rows: untick it, then tick All on each row you want, `session_bridge` included.
+
 Create the key yourself, signed in as you: what the key registers belongs to the person who created it.
 
 **2. Install the plugin.** At the Claude Code prompt:
@@ -98,12 +100,12 @@ More: /talkif help
 ```
 
 ```
-Talkif is not connected: Connectors are not turned on for your Talkif account.
+Not connected: Connectors are not turned on for your Talkif account.
 Next: An owner or admin turns them on in app.talkif.ai under Developer → Integrations. The plugin checks again every 30 seconds.
 More: /talkif help
 ```
 
-When Talkif refuses the key (Connectors off, a missing scope, an IP allowlist), the plugin tries again every 30 seconds and comes back on by itself once it is fixed. `/talkif setup` tries again at once.
+When Talkif refuses the key (Connectors off, a missing scope, an IP allowlist), the plugin tries again every 30 seconds and comes back on by itself once it is fixed. `/talkif` tries again at once.
 
 ## Using it
 
@@ -227,10 +229,10 @@ It only answers questions, never takes tasks, and only you can reach it (it runs
 
 | You see | Fix |
 |---|---|
-| `no Talkif API key is set` | Create a key (step 1) and paste it in `/plugin` → Installed → talkif → Configure options. |
-| `Connectors are not turned on for your Talkif account` | An owner or admin turns them on in the dashboard: Developer → Integrations. The plugin notices within 30 seconds, or at once with `/talkif setup`. |
-| `the API key lacks a scope it needs` | Edit the key in Developer → Credentials and add the scope `/talkif setup` names. |
-| `the API key lacks a scope it needs`, although the key has **Full access** | Full access does not include Connectors: it is granted by name only. In Developer → Credentials, untick Full access, tick All on every row including **session_bridge**, and save. The key itself stays the same. |
+| `no API key is set yet` | Create a key (step 1) and paste it in `/plugin` → Installed → talkif → Configure options. |
+| `Connectors are not turned on for your Talkif account` | An owner or admin turns them on in the dashboard: Developer → Integrations. The plugin notices within 30 seconds, or at once with `/talkif`. |
+| `your API key is set, but it is missing a permission` | Run `/talkif`: it names the row to tick in Developer → Credentials. |
+| `missing a permission`, although the key has **Full access** | Full access does not include Connectors: it is granted by name only. In Developer → Credentials, untick Full access, tick All on every row including **session_bridge**, and save. The key itself stays the same. |
 | `this computer's IP address is not on the API key's allowlist` | Add your current IP address to the key, or remove the restriction. The plugin checks again every 30 seconds. |
 | `your Talkif account has no published flow with a Connectors node` | Add a Connectors node to an agent in the flow builder and publish it, or set `flowId`. |
 | `the API key was refused (expired or revoked?)` | Create a new key and paste it in Configure options. |

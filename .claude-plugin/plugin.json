@@ -1,13 +1,13 @@
 {
   "name": "talkif",
-  "version": "0.30.3",
+  "version": "0.30.4",
   "description": "Talkif for Claude Code: the Talkif API as tools, your sessions reachable by voice through the Talkif app, tasks between sessions, and calls that ring you when a session needs you.",
   "types": "./types/index.d.ts",
   "userConfig": {
     "apiKey": {
       "type": "string",
       "title": "Talkif API key",
-      "description": "From the Talkif dashboard (Developer → Credentials). Scopes: Connectors and Flows (read) for calls and sessions; Calls (read) for the transcript of a call to a teammate; plus the scopes of the Talkif tools you want Claude to use. Stored in your keychain, never in settings.json.",
+      "description": "From the Talkif dashboard (Developer → Credentials). Permissions: All on session_bridge (Connectors) and Read on flows; Read on calls for transcripts of calls to teammates; plus those of the Talkif tools you want Claude to use. Full access does not include Connectors. Stored in your keychain, never in settings.json.",
       "sensitive": true
     },
     "apiUrl": {

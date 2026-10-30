@@ -45,9 +45,14 @@ export type SetupOptions = { apiKey: string; apiUrl: string }
 
 const PASTE_KEY = 'paste it in /plugin → talkif → Configure options'
 
+/** The permissions a key needs, as the dashboard's key editor names them. */
+export const KEY_PERMISSIONS = 'All on the session_bridge row (Connectors) and Read on the flows row'
+/** Full access (*) never includes Connectors; the dashboard greys out every row while it is on. */
+export const FULL_ACCESS_NOTE = 'Full access does not include Connectors: untick Full access first, then tick All on each row you want, session_bridge included'
+
 export const NO_KEY_PROBLEM: Problem = {
   reason: 'no API key is set yet',
-  next: `in app.talkif.ai open Developer → Credentials, create an API key with the permissions Connectors and Flows (read), and ${PASTE_KEY}`,
+  next: `in app.talkif.ai open Developer → Credentials, create an API key with ${KEY_PERMISSIONS}, and ${PASTE_KEY}`,
 }
 
 /**
@@ -182,7 +187,7 @@ export function refusalReason(status: number, text: string): Problem | undefined
     return { reason: 'Connectors are not turned on for your Talkif account', next: 'an owner or admin turns them on in app.talkif.ai under Developer → Integrations. The plugin checks again every 30 seconds' }
   }
   if (text.includes('api_key_insufficient_scope')) {
-    return { reason: 'your API key is set, but it is missing permissions', next: 'in app.talkif.ai open Developer → Credentials, edit the key and turn on Connectors and Flows (read). The plugin checks again every 30 seconds and connects by itself' }
+    return { reason: 'your API key is set, but it is missing a permission', next: `run /talkif to see which permission` }
   }
   if (text.includes('api_key_ip_restricted')) {
     return { reason: "this computer's IP address is not on the API key's allowlist", next: 'add it to the key in Developer → Credentials, or remove the restriction' }
@@ -221,7 +226,7 @@ export function parseConsent(body: unknown): Consent | undefined {
 export type Check = { name: string; ok: boolean; detail: string; next?: string }
 
 export const KEY_STEP =
-  'Create an API key in the Talkif dashboard: Developer → Credentials, with the scopes Connectors and Flows (read). ' +
+  `In app.talkif.ai open Developer → Credentials and create an API key with ${KEY_PERMISSIONS} (not Full access: it does not include Connectors). ` +
   'Then paste it in /plugin → talkif → Configure options → Talkif API key.'
 export const CONNECTORS_STEP = 'An owner or admin of the Talkif account turns Connectors on in the dashboard: Developer → Integrations.'
 export const FLOW_STEP =
@@ -230,14 +235,14 @@ export const FLOW_STEP =
 /** A probe that did not return 200, as a failed check with what to do. */
 export function failedProbe(name: string, scope: string, status: number, text: string): Check {
   if (text.includes('api_key_insufficient_scope')) {
-    return { name, ok: false, detail: `the API key lacks the ${scope} scope`, next: `Edit the key in Developer → Credentials and add the ${scope} scope (or create a new key with Connectors and Flows (read)).` }
+    return { name, ok: false, detail: `the API key is missing the permission ${scope}`, next: `In app.talkif.ai open Developer → Credentials, edit the key and tick ${scope}. ${FULL_ACCESS_NOTE}. Then run /talkif again.` }
   }
   if (text.includes('api_key_ip_restricted')) {
     return { name, ok: false, detail: 'this IP address is not on the API key allowlist', next: 'Add this IP address to the key in Developer → Credentials, or remove the restriction.' }
   }
   if (status === 401) return { name, ok: false, detail: 'the API key was refused (expired, revoked or mistyped)', next: KEY_STEP }
   if (status === 403) return { name, ok: false, detail: 'the API key is not allowed to do this', next: KEY_STEP }
-  return { name, ok: false, detail: `the backend answered ${status}${text ? `: ${text.slice(0, 160)}` : ''}`, next: 'Try /talkif setup again in a minute; if it stays, check the API URL option (empty means Talkif).' }
+  return { name, ok: false, detail: `the backend answered ${status}${text ? `: ${text.slice(0, 160)}` : ''}`, next: 'Try /talkif again in a minute; if it stays, check the API URL option (empty means Talkif).' }
 }
 
 /** The consent body as a check: on, off (withdrawn), terms changed, or never turned on. */
@@ -257,14 +262,14 @@ export function consentCheck(consent: Consent): Check {
 
 /** The checks as plain text: one line each, then the first next step. */
 export function setupReport(checks: readonly Check[]): string {
-  const lines = ['Talkif setup', ...checks.map(c => `${c.ok ? '[ok]     ' : '[missing]'} ${c.name}: ${c.detail}`)]
+  const lines = ['Setup', ...checks.map(c => `${c.ok ? '[ok]     ' : '[missing]'} ${c.name}: ${c.detail}`)]
   const steps = checks.filter(c => !c.ok && c.next).map(c => c.next)
   if (steps.length === 0) {
     lines.push('', 'All set. Call your Talkif agent from the Talkif app (signed in), or let a session ring you with call_me.')
   } else {
     lines.push('', `Next step: ${steps[0]}`)
     for (const later of [...new Set(steps.slice(1))]) lines.push(`Then: ${later}`)
-    lines.push('Run /talkif setup again after each step.')
+    lines.push('Run /talkif again after each step.')
   }
   return lines.join('\n')
 }
@@ -336,7 +341,7 @@ export const MORE = 'More: /talkif help'
 
 /** /talkif: two or three lines, in the same order as statusText. */
 export function cmLines(state: TalkifState): string {
-  if (state.problem) return [`Talkif is not connected: ${state.problem.reason}.`, `Next: ${sentence(state.problem.next)}`, MORE].join('\n')
+  if (state.problem) return [`Not connected: ${state.problem.reason}.`, `Next: ${sentence(state.problem.next)}`, MORE].join('\n')
   if (state.off) return [`Off. Turn it on with ${state.off === 'all' ? '/talkif on all' : '/talkif on'}.`, MORE].join('\n')
   if (state.offline && !state.onCall) return ['Offline: Talkif cannot be reached from here. The plugin keeps retrying by itself.', MORE].join('\n')
   if (state.registered.length === 0) return ['Connecting…', MORE].join('\n')
