@@ -117,7 +117,7 @@ const TASK_TOOL_NAMES: ReadonlySet<string> = new Set(TASK_TOOLS.map(t => taskToo
 const PEERS_REFRESH_MS = 10 * 60_000
 // Sent as the User-Agent on every request to the backend and the bridge. Kept equal
 // to .claude-plugin/plugin.json's version: bump both together.
-export const VERSION = '0.30.5'
+export const VERSION = '0.30.6'
 const USER_AGENT = `talkif-claude/${VERSION}`
 // Debug pane: this session's bridge traffic, newest last (`/talkif traffic`; recorded only with the debug option).
 const TRAFFIC_PANE = 'talkif-traffic'
@@ -1480,7 +1480,7 @@ async function setupChecks($: EngineInterface): Promise<Check[]> {
       ? consentCheck(parsed)
       : consent.status === 200
         ? { name: 'Connectors', ok: false, detail: 'the backend gave an unexpected consent answer', next: 'Update the plugin (claude plugin update talkif@talkif-claude).' }
-        : failedProbe('Connectors', 'All on the session_bridge row (Connectors)', consent.status, consent.text),
+        : failedProbe('Connectors', 'Connectors', consent.status, consent.text),
   )
 
   const listed = await probe($, c.url, c.apiKey, '/flows/published?limit=100')

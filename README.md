@@ -25,7 +25,7 @@ You need:
 | **Calls** (`calls:read`), optional | call_me gets the transcript of a call to a teammate (a call to you comes back without it) |
 | anything else, optional | the Talkif tools Claude may use: each tool is listed only when the key has its scope (for example **Calls** to read call history, **Flows (write)** to edit voice agents) |
 
-**Full access does not include Connectors.** If you tick Full access, the dashboard greys out the other rows: untick it, then tick All on each row you want, `session_bridge` included.
+**Full access does not include Connectors.** Tick **Connectors** as well; it sits right under Full access.
 
 Create the key yourself, signed in as you: what the key registers belongs to the person who created it.
 
@@ -232,7 +232,7 @@ It only answers questions, never takes tasks, and only you can reach it (it runs
 | `no API key is set yet` | Create a key (step 1) and paste it in `/plugin` → Installed → talkif → Configure options. |
 | `Connectors are not turned on for your Talkif account` | An owner or admin turns them on in the dashboard: Developer → Integrations. The plugin notices within 30 seconds, or at once with `/talkif`. |
 | `your API key is set, but it is missing a permission` | Run `/talkif`: it names the row to tick in Developer → Credentials. |
-| `missing a permission`, although the key has **Full access** | Full access does not include Connectors: it is granted by name only. In Developer → Credentials, untick Full access, tick All on every row including **session_bridge**, and save. The key itself stays the same. |
+| `missing a permission`, although the key has **Full access** | Full access does not include Connectors. In Developer → Credentials, open the key, tick **Connectors** under Full access and save. The key itself stays the same. |
 | `this computer's IP address is not on the API key's allowlist` | Add your current IP address to the key, or remove the restriction. The plugin checks again every 30 seconds. |
 | `your Talkif account has no published flow with a Connectors node` | Add a Connectors node to an agent in the flow builder and publish it, or set `flowId`. |
 | `the API key was refused (expired or revoked?)` | Create a new key and paste it in Configure options. |

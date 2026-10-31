@@ -912,3 +912,14 @@ test('setup names the key as the dashboard lists it, never the whole key', async
   expect(maskKey('tif_live_abcdefghijklmnopqrstuvwxyz0123')).toBe('tif_live_abc...0123')
   expect(maskKey('short')).toBe('(hidden)')
 })
+
+import { badUrlProblem } from '../hooks/config'
+
+test('a wrong API URL option is never echoed, and a key pasted there is called out', async () => {
+  const key = 'tif_live_abcdefghijklmnopqrstuvwxyz0123456789'
+  const p = badUrlProblem(key)
+  expect(p.reason + p.next).not.toContain(key)
+  expect(p.reason).toMatch(/holds an API key/)
+  expect(p.next).toMatch(/revoke it/)
+  expect(badUrlProblem('ftp://x').reason).not.toContain('ftp://x')
+})

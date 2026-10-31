@@ -56,9 +56,9 @@ export function maskKey(key: string): string {
 }
 
 /** The permissions a key needs, as the dashboard's key editor names them. */
-export const KEY_PERMISSIONS = 'All on the session_bridge row (Connectors) and Read on the flows row'
+export const KEY_PERMISSIONS = 'Full access plus Connectors (or Read on flows plus Connectors)'
 /** Full access (*) never includes Connectors; the dashboard greys out every row while it is on. */
-export const FULL_ACCESS_NOTE = 'Full access does not include Connectors: untick Full access first, then tick All on each row you want, session_bridge included'
+export const FULL_ACCESS_NOTE = 'Full access does not include Connectors: tick Connectors, right under Full access, as well'
 
 export const NO_KEY_PROBLEM: Problem = {
   reason: 'no API key is set yet',
@@ -75,9 +75,15 @@ export function normalizeApiUrl(raw: string): string | undefined {
   return /^https?:\/\/[^/\s]+/.test(url) ? url : undefined
 }
 
+// The value itself is never shown: people paste keys into the wrong field, and this
+// text lands in the transcript.
 export const badUrlProblem = (raw: string): Problem => ({
-  reason: `the API URL option "${raw.trim()}" is not an http:// or https:// address`,
-  next: `empty the API URL option in /plugin → talkif → Configure options to use Talkif (${DEFAULT_API_URL})`,
+  reason: /^tif_/.test(raw.trim())
+    ? 'the API URL option holds an API key, not an address'
+    : 'the API URL option is not an http:// or https:// address',
+  next: /^tif_/.test(raw.trim())
+    ? `that key is now on screen: revoke it in app.talkif.ai → Developer → Credentials, put a new key in the Talkif API key option, and empty the API URL option (empty means ${DEFAULT_API_URL})`
+    : `empty the API URL option in /plugin → talkif → Configure options to use Talkif (${DEFAULT_API_URL})`,
 })
 
 /** KEY=value lines; blank lines, comments and lines without "=" are skipped. */

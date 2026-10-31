@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.30.6 — 2026-11-01
+
+- **Security: a value typed into the wrong option is never shown back.** An API key pasted into the API URL option used to appear in full in `/talkif`; now it says the field holds a key, asks you to revoke that key, and shows nothing of it.
+- Permissions are named as the dashboard now shows them: tick **Connectors** right under Full access.
+
 ## 0.30.5 — 2026-10-31
 
 - **`/talkif` shows which key it uses**, masked the way Developer → Credentials lists keys (`tif_live_abc...0123`), so you can tell whether the key you edited is the one the plugin holds. The whole key is never shown.
