@@ -905,3 +905,10 @@ test('a refused tool registration does not stop the session from joining Talkif,
   expect(notes[0]).toMatch(/call_me/)
   expect(notes[0]).toMatch(/claude mcp remove talkif/)
 })
+
+import { maskKey } from '../hooks/config'
+
+test('setup names the key as the dashboard lists it, never the whole key', async () => {
+  expect(maskKey('tif_live_abcdefghijklmnopqrstuvwxyz0123')).toBe('tif_live_abc...0123')
+  expect(maskKey('short')).toBe('(hidden)')
+})

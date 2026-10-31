@@ -45,6 +45,16 @@ export type SetupOptions = { apiKey: string; apiUrl: string }
 
 const PASTE_KEY = 'paste it in /plugin → talkif → Configure options'
 
+/**
+ * A key as the dashboard lists it in Developer → Credentials: the first 12 and
+ * last 4 characters (the backend's own key_prefix), so a user can tell which key
+ * the plugin holds. Shorter strings are not keys and show as hidden.
+ */
+export function maskKey(key: string): string {
+  const k = key.trim()
+  return k.length > 20 ? `${k.slice(0, 12)}...${k.slice(-4)}` : '(hidden)'
+}
+
 /** The permissions a key needs, as the dashboard's key editor names them. */
 export const KEY_PERMISSIONS = 'All on the session_bridge row (Connectors) and Read on the flows row'
 /** Full access (*) never includes Connectors; the dashboard greys out every row while it is on. */

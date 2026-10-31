@@ -34,6 +34,7 @@ import {
   parseSharing,
   SHARING_LEVELS,
   SHARING_TEXT,
+  maskKey,
 } from './config'
 import type { TalkifState, Check, Credentials, FlowRef, Problem, Sharing } from './config'
 import {
@@ -116,7 +117,7 @@ const TASK_TOOL_NAMES: ReadonlySet<string> = new Set(TASK_TOOLS.map(t => taskToo
 const PEERS_REFRESH_MS = 10 * 60_000
 // Sent as the User-Agent on every request to the backend and the bridge. Kept equal
 // to .claude-plugin/plugin.json's version: bump both together.
-export const VERSION = '0.30.4'
+export const VERSION = '0.30.5'
 const USER_AGENT = `talkif-claude/${VERSION}`
 // Debug pane: this session's bridge traffic, newest last (`/talkif traffic`; recorded only with the debug option).
 const TRAFFIC_PANE = 'talkif-traffic'
@@ -1446,7 +1447,7 @@ async function setupChecks($: EngineInterface): Promise<Check[]> {
   checks.push({
     name: 'API key',
     ok: true,
-    detail: c.source === 'options' ? 'from the apiKey option (keychain)' : `from the developer file ${devFileName} (the apiKey option is empty)`,
+    detail: `${maskKey(c.apiKey)}, ${c.source === 'options' ? 'from the apiKey option (keychain)' : `from the developer file ${devFileName} (the apiKey option is empty)`}. Developer → Credentials lists keys the same way`,
   })
   const where = optApiUrl.trim()
     ? 'the API URL option'

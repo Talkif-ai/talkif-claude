@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.30.5 — 2026-10-31
+
+- **`/talkif` shows which key it uses**, masked the way Developer → Credentials lists keys (`tif_live_abc...0123`), so you can tell whether the key you edited is the one the plugin holds. The whole key is never shown.
+
 ## 0.30.4 — 2026-10-30
 
 - **`/talkif` sets itself up.** While the session is not connected, `/talkif` runs the setup checks at once, tries again right away, and leads with the one thing that is missing and where to fix it. No separate `/talkif setup` needed (it still exists, with more detail).
