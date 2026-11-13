@@ -21,8 +21,12 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 
 // ---- Talkif's own setup check (the MCP tool talkif_setup on the Talkif server) ----
 
-/** Someone a ring can reach, and how many of their phones would ring. */
-export type RingPerson = { userId: string; name: string | undefined; phones: number }
+/**
+ * Someone a ring can reach. `phones`: how many of their phones would ring; Talkif
+ * counts them only for the person a ring reaches (the signed-in one, or an
+ * account's only one), never for everyone in an account of several.
+ */
+export type RingPerson = { userId: string; name: string | undefined; phones: number | undefined }
 
 /** What this plugin reads from Talkif's setup check; absent fields: not sent (older server, or not shown to the key). */
 export type ServerSetup = { organization: boolean | undefined; people: RingPerson[] | undefined }
@@ -47,8 +51,8 @@ export function parseServerSetup(body: unknown): ServerSetup | undefined {
   const account = isRecord(report.account) ? report.account : {}
   const people = Array.isArray(report.people)
     ? report.people.flatMap(p =>
-        isRecord(p) && typeof p.userId === 'string' && typeof p.phones === 'number'
-          ? [{ userId: p.userId, name: typeof p.name === 'string' && p.name.trim() ? p.name.trim() : undefined, phones: p.phones }]
+        isRecord(p) && typeof p.userId === 'string'
+          ? [{ userId: p.userId, name: typeof p.name === 'string' && p.name.trim() ? p.name.trim() : undefined, phones: typeof p.phones === 'number' ? p.phones : undefined }]
           : [],
       )
     : undefined
@@ -80,6 +84,8 @@ export function phoneCheck(server: ServerSetup | undefined, pickedUserId: string
     return { name, ok: false, detail: `${people.length} people take calls in this account and nobody is picked`, next: PICK_STEP }
   }
   const whose = only ? `call_me rings ${who(target)}` : `call_me rings ${who(target)} (picked with /talkif ring)`
+  // Talkif does not count the phones of one of several people: say whose phone, nothing more.
+  if (target.phones === undefined) return { name, ok: true, detail: whose }
   return target.phones > 0
     ? { name, ok: true, detail: `${whose}, who has ${phones(target.phones)}` }
     : { name, ok: false, detail: `${whose}, who has ${phones(0)}`, next: INSTALL_APP_STEP }

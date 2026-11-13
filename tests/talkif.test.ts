@@ -940,6 +940,8 @@ const rpcAnswer = (report: unknown) => ({ jsonrpc: '2.0', id: 1, result: { conte
 test('setup check: Talkif\'s own report gives the account and who a ring reaches; anything else gives nothing', () => {
   const report = { checks: [], account: { name: 'Acme', organization: true }, people: [{ userId: 'u1', name: ' Ada ', phones: 1 }, { userId: 'u2', name: null, phones: 0 }, { name: 'no id' }] }
   expect(parseServerSetup(rpcAnswer(report))).toEqual({ organization: true, people: [{ userId: 'u1', name: 'Ada', phones: 1 }, { userId: 'u2', name: undefined, phones: 0 }] })
+  // One of several people: Talkif sends no phone count.
+  expect(parseServerSetup(rpcAnswer({ checks: [], people: [{ userId: 'u3', name: 'Bob' }] }))?.people).toEqual([{ userId: 'u3', name: 'Bob', phones: undefined }])
   // Not shown to the key: no people.
   expect(parseServerSetup(rpcAnswer({ checks: [], account: { name: null, organization: false }, people: null }))).toEqual({ organization: false, people: undefined })
   // An older server without the tool, an error, or text that is not a report.
@@ -959,6 +961,10 @@ test('setup check: the phone is the one call_me rings, with what to do when it c
   expect(phoneCheck({ organization: true, people: [ada, bob] }, undefined)?.next).toBe(PICK_STEP)
   expect(phoneCheck({ organization: true, people: [ada, bob] }, 'u2')).toMatchObject({ ok: false, next: INSTALL_APP_STEP })
   expect(phoneCheck({ organization: true, people: [ada, bob] }, 'u1')?.ok).toBe(true)
+  // Several people as Talkif sends them (no phone counts): whose phone, no claim about it.
+  const listed = [{ userId: 'u1', name: 'Ada', phones: undefined }, { userId: 'u2', name: 'Bob', phones: undefined }]
+  expect(phoneCheck({ organization: true, people: listed }, 'u2')).toEqual({ name: 'Phone', ok: true, detail: 'call_me rings Bob (picked with /talkif ring)' })
+  expect(phoneCheck({ organization: true, people: listed }, undefined)?.next).toBe(PICK_STEP)
   expect(phoneCheck({ organization: true, people: [] }, undefined)?.ok).toBe(false)
 })
 
