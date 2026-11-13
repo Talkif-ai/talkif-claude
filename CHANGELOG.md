@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.31.0 — 2026-11-14
+
+- **Away mode.** `/talkif away` (`30m`, `2h`; 12 hours without a time) and `/talkif back`, or say it on a call ("I'm going out for an hour"). Talkif keeps it, and every session of yours, on any computer, knows; it rides beside the next message, never in the system prompt. The status line shows `Talkif: on, away`.
+- **Sessions ring you instead of waiting.** While you are away, a session that waits for you rings your Talkif app after a minute: for an open question (asked in plain words, the answers come back to the session), a permission prompt (what it wants to do and why, in plain words, never the command; it can only be allowed at your computer), or, if you turn it on, a long task done. New options: **Ring me when a session waits** (`never` by default, or 5, 10 or 30 minutes also when you are not away), and one switch per situation. One ring per situation, to your own phone only; a pending call is never doubled; sessions on one computer ring at least 3 minutes apart and at most 3 times an hour each; typing in the session cancels it; an unanswered call pauses that session's rings (call_me included) for 15 minutes; a turn a call started never rings. A permission ring starts only once Claude Code says its dialog is open with nobody typing. A question dialog rings like a question.
+- **Tell all sessions at once.** On a call, a note to all your sessions reaches each one as context (no session claims it, none starts working). With an API key, away mode and these notes need an account where one person takes calls.
+- A turn kind this version does not know is ignored instead of being answered as a call turn.
+- Needs the matching Talkif update; with an older one, `/talkif away` says it is not available and nothing else changes. Run `/talkif publish` after updating so your flow gets the new instructions.
+
 ## 0.30.9 — 2026-11-14
 
 - **A session outside a repository is named after its folder**, not "claude-code", so your voice agent can tell which one you mean (the home folder is called "home folder", never your user name). When no recap of a session's work could be written yet, the list says so and the plugin tries again within two minutes instead of fifteen.

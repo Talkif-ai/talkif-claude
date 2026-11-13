@@ -1,6 +1,6 @@
 {
   "name": "talkif",
-  "version": "0.30.9",
+  "version": "0.31.0",
   "description": "Talkif for Claude Code: the Talkif API as tools, your sessions reachable by voice through the Talkif app, tasks between sessions, and calls that ring you when a session needs you.",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -45,6 +45,36 @@
       "title": "Ring back when a call task ends",
       "description": "When a task given on a call finishes or gets stuck after the call ended, ring you with the result.",
       "default": true
+    },
+    "ringAfter": {
+      "type": "string",
+      "title": "Ring me when a session waits (minutes)",
+      "description": "never (default): a session rings you only while you are set away (/talkif away, or say it on a call), after one minute. 5, 10 or 30: also when you are not set away, once a session has waited that long for you. One ring per situation, never repeated.",
+      "options": [
+        "never",
+        "5",
+        "10",
+        "30"
+      ],
+      "default": "never"
+    },
+    "ringOnQuestion": {
+      "type": "boolean",
+      "title": "Ring for an open question",
+      "description": "A session stopped with a question or decision only you can answer.",
+      "default": true
+    },
+    "ringOnPermission": {
+      "type": "boolean",
+      "title": "Ring for a permission prompt",
+      "description": "A session waits at a permission prompt. The call says in plain words what it wants to do and why, never the command itself; it can only be allowed at your computer.",
+      "default": true
+    },
+    "ringOnFinish": {
+      "type": "boolean",
+      "title": "Ring when a long task is done",
+      "description": "A turn of 10 minutes or more finished.",
+      "default": false
     },
     "callTasks": {
       "type": "string",

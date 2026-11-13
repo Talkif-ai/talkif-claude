@@ -86,6 +86,7 @@ Under the prompt, the plugin shows one status line:
 | Status line | What it means |
 |---|---|
 | `Talkif: on · Acme` | this session can be reached through your voice agent, in the account named after the dot |
+| `Talkif: on, away · Acme` | the same, and you are set as away: a waiting session rings you (see Away mode) |
 | `Talkif: on a call` | a call is ringing or running for this session, or a task from a call is running or queued |
 | `Talkif: connecting…` | the connection to Talkif is coming up, or dropped and retries by itself |
 | `Talkif: off` | this session is switched off (`/talkif on` turns it back on) |
@@ -122,6 +123,26 @@ When Talkif refuses the key (Connectors off, a missing scope, an IP allowlist), 
 
 **What you say reaches every session.** After each call, a short summary goes to all your connected sessions, so what you explained on one call is known everywhere.
 
+**Tell all sessions at once.** On a call, say something to all of them ("tell all my sessions I'm out, call me if you need me"). The agent sends it once to every one of your own sessions: no session claims it, none starts working on it; each one has it beside your next message.
+
+## Away mode
+
+One switch, kept by Talkif, that every one of your sessions in that Talkif account knows: on this computer and on your others. (It is kept per person; sessions of yours in another Talkif account learn it when they connect again.)
+
+- `/talkif away` (or `/talkif away 30m`, `/talkif away 2h`): you are out. Without a time it lasts 12 hours, at most a day.
+- `/talkif back`: you are at the terminal again.
+- On a call: "I'm going out for an hour" or "I'm back". The agent sets it for you.
+
+While you are away, a session that waits for you rings your own Talkif app after a minute instead of waiting in the terminal, once per situation:
+
+- **An open question**: it stopped with a question or a decision only you can make, or it shows you a question to pick an answer from. The call asks it in plain words; your answers come back to the session.
+- **A permission prompt**: its permission dialog stays open with nobody typing (Claude Code's own signal, after a few seconds). The call says in plain words what it wants to do and why, never the command itself. It can only be allowed at your computer.
+- **A long task done** (off by default): a turn of 10 minutes or more finished.
+
+When you are not set away, nothing rings unless you set **Ring me when a session waits** to 5, 10 or 30 minutes. Typing in a session counts as an answer: it does not ring for what you already answered. A call that is already pending is never doubled, sessions on one computer ring at least 3 minutes apart, and one session rings at most 3 times an hour. When you do not answer a call, that session rings you no more for 15 minutes (call_me included), and a turn a call started never rings by itself. Automatic rings go to your own phone only, never to the person picked with `/talkif ring`; in an account where several people take calls, sessions do not ring by themselves (call_me still works). The away state reaches a session beside its next message, never in the system prompt, so it does not cost the session its prompt cache.
+
+**Nothing is allowed by phone.** A permission ring only tells you a session waits and what for; you allow it at your computer.
+
 ## The Talkif tools
 
 The plugin brings Talkif's MCP server (`https://api.talkif.ai/api/v1/mcp`) with your API key: every Talkif API operation your key's scopes allow is a tool Claude can use ("which calls failed today?", "publish the support flow", "add these contacts to the campaign"). Tools that cost money or reach people outside your account (placing calls, buying numbers, starting campaigns) say so, and Claude asks you first.
@@ -156,7 +177,9 @@ A task can be handed on from session to session (and to connected bots such as a
 - **Credential files are not read during a call task**: for example `~/.ssh`, `~/.aws`, `.env` files and key files.
 - **Secrets are kept off the call, as well as possible.** The voice agent and the sessions are told never to say keys, tokens or passwords. The plugin also replaces text that looks like a secret with `[redacted]` before it leaves your machine. This is best effort: a secret in an unusual format can still get through.
 - **Only proven callers count.** A call reaches sessions only when it is started from the Talkif app or dashboard while signed in, when a session places it to you, or when you confirm on your signed-in Talkif app that a call from your phone number is you. Any other call from a phone number, an embed or an API key does not.
-- **Call text is treated as data.** Transcripts and call summaries reach the session marked as text from a call, not as instructions.
+- **Call text is treated as data.** Transcripts, call summaries, notes to all sessions and the away note reach the session marked as text from a call, not as instructions.
+- **No permission by phone.** A call can never allow a tool: a permission ring only tells you a session waits. A turn a call started never rings by itself, and an unanswered call pauses that session's rings for 15 minutes.
+- **Away mode is per person.** With an API key, `/talkif away` and notes to all sessions work only in an account where one person takes calls: a key can be shared, and its sessions would be someone else's.
 
 ## Who can reach what
 
@@ -177,6 +200,7 @@ A task can be handed on from session to session (and to connected bots such as a
 | `/talkif setup` | check the connection and show what's missing (also shows the key, flow, accounts and folders in use) |
 | `/talkif traffic` | see what went back and forth (needs the `debug` option) |
 | `/talkif ring` | list who call_me may ring; `/talkif ring <number or name>` picks whose phone rings (needed when several people share the Talkif account) |
+| `/talkif away [30m · 2h]` · `/talkif back` | you are out (waiting sessions ring you) / at the terminal again; every session of yours knows |
 
 Advanced:
 
@@ -198,6 +222,10 @@ Change them in `/config` → talkif. The API key is in `/plugin` → Installed �
 | `sharing` | `ask` | in an organization, what other members may do with your sessions: `private`, `ask` (questions only) or `work` (questions and tasks); `/talkif share` changes one session |
 | `callTasks` | `read-only` | `read-only`: tasks from a call can only read. `session`: they use the session's own permissions |
 | `callback` | on | ring you when a task from a call ends after you hung up |
+| `ringAfter` | `never` | ring when a session waits this many minutes for you (`5`, `10`, `30`); `never`: only while you are set away, then after a minute |
+| `ringOnQuestion` | on | ring for an open question |
+| `ringOnPermission` | on | ring for a permission prompt |
+| `ringOnFinish` | off | ring when a turn of 10 minutes or more finished |
 | `parallel` | off | queue more tasks from a call while one runs, instead of saying "still on the last task" |
 | `debug` | off | record this session's traffic for `/talkif traffic` |
 

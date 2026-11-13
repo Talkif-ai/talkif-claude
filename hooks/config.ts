@@ -332,6 +332,8 @@ export type TalkifState = {
   registered: readonly (string | undefined)[]
   /** The name of the flow calls run on, when known. */
   flowName: string | undefined
+  /** The developer set themselves away (here or on a call): sessions ring instead of waiting. */
+  away?: boolean
 }
 
 const sentence = (text: string): string => {
@@ -350,7 +352,8 @@ export function statusText(state: TalkifState): string {
   if (state.offline) return 'Talkif: offline, retrying…'
   if (state.registered.length === 0) return 'Talkif: connecting…'
   const named = [...new Set(state.registered.filter((n): n is string => n !== undefined))]
-  return named.length ? `Talkif: on · ${named.join(', ')}` : 'Talkif: on'
+  const head = state.away ? 'Talkif: on, away' : 'Talkif: on'
+  return named.length ? `${head} · ${named.join(', ')}` : head
 }
 
 export const MORE = 'More: /talkif help'
@@ -363,7 +366,8 @@ export function cmLines(state: TalkifState): string {
   if (state.registered.length === 0) return ['Connecting…', MORE].join('\n')
   const call = state.flowName ? `Call "${state.flowName}" in the Talkif app.` : 'Call your Talkif agent in the Talkif app.'
   const head = state.onCall ? 'On a call.' : 'On.'
-  return [`${head} This session can be reached through ${accountsText(state.registered)}.`, call, MORE].join('\n')
+  const away = state.away ? ['You are set as away: a waiting session rings you. /talkif back when you are at the terminal.'] : []
+  return [`${head} This session can be reached through ${accountsText(state.registered)}.`, call, ...away, MORE].join('\n')
 }
 
 /** /talkif help: the common commands first; two columns when the terminal is wide enough, else stacked. */
@@ -372,6 +376,8 @@ const HELP_ROWS: ReadonlyArray<readonly [string, string]> = [
   ['/talkif on | off', 'make this session reachable or not'],
   ['/talkif on all | off all', 'all open sessions on or off'],
   ['/talkif default on | off', 'how new sessions start'],
+  ['/talkif away [30m | 2h]', "you're out: waiting sessions ring you"],
+  ['/talkif back', "you're at the terminal again"],
   ['/talkif setup', "check the connection, show what's missing"],
   ['/talkif traffic', 'what went back and forth (debug option)'],
   ['/talkif share private | ask | work', 'what members may do with this session'],
