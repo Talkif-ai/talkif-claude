@@ -404,6 +404,8 @@ function fakeTalkif(on: On) {
     transcriptStatus: 403,
     // $.tool.register refuses every tool (a hand-added server named "talkif" owns the names).
     refuseTools: false,
+    // POST /mcp tools/call talkif_setup: the report it answers with (undefined: an older server, "Unknown tool").
+    setupReport: undefined as unknown,
     deliver: (_item: unknown) => {},
     idle: () => {},
   }
@@ -438,6 +440,11 @@ function fakeTalkif(on: On) {
       return json(204, undefined)
     }
     if (path === '/session-bridge/calls' && method === 'POST') return json(201, { callId: 'call-ring', ringSecs: 30 })
+    if (path === '/mcp' && method === 'POST') {
+      return world.setupReport === undefined
+        ? json(200, { jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'Unknown tool: talkif_setup' } })
+        : json(200, { jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: JSON.stringify(world.setupReport) }], isError: false } })
+    }
     if (path === '/session-bridge/ring-targets') return json(200, [{ userId: 'u-omer', name: 'Ömer' }, { userId: 'u-ada', name: 'Ada' }])
     const move = /^\/session-bridge\/bridge-1\/tasks\/([^/]+)\/(\w+)$/.exec(path)
     if (move && method === 'POST') {
@@ -922,4 +929,114 @@ test('a wrong API URL option is never echoed, and a key pasted there is called o
   expect(p.reason).toMatch(/holds an API key/)
   expect(p.next).toMatch(/revoke it/)
   expect(badUrlProblem('ftp://x').reason).not.toContain('ftp://x')
+})
+
+import { AWAY_TOOLS, INSTALL_APP_STEP, PICK_STEP, adviceLines, optionAdvice, parseServerSetup, permissionLines, phoneCheck } from '../hooks/doctor'
+import type { PluginSettings } from '../hooks/doctor'
+import { mcpSessionToolNote } from '../hooks/register'
+
+const rpcAnswer = (report: unknown) => ({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: JSON.stringify(report) }], isError: false } })
+
+test('setup check: Talkif\'s own report gives the account and who a ring reaches; anything else gives nothing', () => {
+  const report = { checks: [], account: { name: 'Acme', organization: true }, people: [{ userId: 'u1', name: ' Ada ', phones: 1 }, { userId: 'u2', name: null, phones: 0 }, { name: 'no id' }] }
+  expect(parseServerSetup(rpcAnswer(report))).toEqual({ organization: true, people: [{ userId: 'u1', name: 'Ada', phones: 1 }, { userId: 'u2', name: undefined, phones: 0 }] })
+  // Not shown to the key: no people.
+  expect(parseServerSetup(rpcAnswer({ checks: [], account: { name: null, organization: false }, people: null }))).toEqual({ organization: false, people: undefined })
+  // An older server without the tool, an error, or text that is not a report.
+  expect(parseServerSetup({ jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'Unknown tool: talkif_setup' } })).toBe(undefined)
+  expect(parseServerSetup({ result: { content: [{ type: 'text', text: 'rate_limit_exceeded' }], isError: true } })).toBe(undefined)
+  expect(parseServerSetup({ result: { content: [{ type: 'text', text: 'not json' }] } })).toBe(undefined)
+})
+
+test('setup check: the phone is the one call_me rings, with what to do when it cannot ring', () => {
+  const ada = { userId: 'u1', name: 'Ada', phones: 1 }
+  const bob = { userId: 'u2', name: 'Bob', phones: 0 }
+  expect(phoneCheck(undefined, undefined)).toBe(undefined)
+  expect(phoneCheck({ organization: false, people: undefined }, undefined)).toBe(undefined)
+  expect(phoneCheck({ organization: false, people: [ada] }, undefined)).toEqual({ name: 'Phone', ok: true, detail: 'call_me rings Ada, who has 1 iPhone with the Talkif app signed in' })
+  expect(phoneCheck({ organization: false, people: [bob] }, undefined)?.next).toBe(INSTALL_APP_STEP)
+  // Several people: the one picked with /talkif ring, or a pick first.
+  expect(phoneCheck({ organization: true, people: [ada, bob] }, undefined)?.next).toBe(PICK_STEP)
+  expect(phoneCheck({ organization: true, people: [ada, bob] }, 'u2')).toMatchObject({ ok: false, next: INSTALL_APP_STEP })
+  expect(phoneCheck({ organization: true, people: [ada, bob] }, 'u1')?.ok).toBe(true)
+  expect(phoneCheck({ organization: true, people: [] }, undefined)?.ok).toBe(false)
+})
+
+test('setup check: a tool that would stop at a prompt gets the exact allow rule; allowed ones need nothing', () => {
+  const asking = permissionLines([
+    { tool: 'mcp__talkif__call_me', decision: 'ask' },
+    { tool: 'mcp__talkif__talkif_submit', decision: 'allow' },
+    { tool: 'mcp__talkif__talkif_review', decision: 'deny', rule: 'mcp__talkif__talkif_review' },
+  ]).join('\n')
+  expect(asking).toMatch(/\[asks\] {4}call_me: stops at a permission prompt/)
+  expect(asking).toMatch(/\[ok\] {6}talkif_submit: runs without a prompt/)
+  expect(asking).toMatch(/\[denied\] {2}talkif_review: refused by the rule mcp__talkif__talkif_review/)
+  expect(asking).toMatch(/"permissions" → "allow"/)
+  expect(asking).toMatch(/^  "mcp__talkif__call_me"$/m)
+  expect(asking).not.toMatch(/"mcp__talkif__talkif_submit"/)
+  expect(permissionLines(AWAY_TOOLS.map(t => ({ tool: t.tool, decision: 'allow' as const }))).join('\n')).toMatch(/No change needed/)
+  // Only the plugin's own tools are checked: never Talkif's API tools.
+  expect(AWAY_TOOLS.every(t => t.tool.startsWith('mcp__talkif__'))).toBe(true)
+})
+
+test('setup check: option advice uses the plugin\'s real values, each with a reason', () => {
+  const defaults: PluginSettings = { callTasks: 'read-only', callback: true, parallel: false, sharing: 'ask', folders: '', flowId: '', debug: false }
+  const flow = { id: 'flow-1', name: 'Interviewer' }
+  const advice = optionAdvice(defaults, { flow, cwd: '/home/test/app', organization: true })
+  expect(advice.filter(a => a.kind === 'change')).toEqual([])
+  expect(advice.find(a => a.option === 'flowId')).toMatchObject({ kind: 'optional', suggested: 'flow-1' })
+  expect(advice.find(a => a.option === 'folders')).toMatchObject({ kind: 'optional', suggested: '/home/test/app' })
+  expect(advice.every(a => a.reason.length > 0)).toBe(true)
+  // Every suggested value is one the option takes.
+  const values: Record<string, readonly string[]> = { callTasks: ['read-only', 'session'], callback: ['on', 'off'], parallel: ['on', 'off'], debug: ['on', 'off'], sharing: ['private', 'ask', 'work'] }
+  const risky = optionAdvice({ ...defaults, callTasks: 'session', callback: false, sharing: 'work', debug: true }, { flow: undefined, cwd: undefined, organization: true })
+  for (const a of risky) if (values[a.option]) expect(values[a.option]).toContain(a.suggested)
+  expect(risky.filter(a => a.kind === 'change').map(a => `${a.option}=${a.suggested}`).sort()).toEqual(['callTasks=read-only', 'callback=on', 'debug=off', 'sharing=ask'])
+  // A personal account: sharing changes nothing.
+  expect(optionAdvice({ ...defaults, sharing: 'work' }, { flow: undefined, cwd: undefined, organization: false }).find(a => a.option === 'sharing')?.kind).toBe('keep')
+  const lines = adviceLines(risky)
+  expect(lines[0]).toBe('Suggested options (/config → talkif)')
+  expect(lines[1]).toMatch(/^change {4}/)
+  expect(lines.at(-1)).toMatch(/^keep {6}/)
+})
+
+test('the bundled server\'s setup check points to this plugin\'s own', () => {
+  expect(mcpSessionToolNote('mcp__plugin_talkif_talkif__talkif_setup')).toMatch(/mcp__talkif__talkif_setup/)
+  expect(mcpSessionToolNote('mcp__plugin_talkif_talkif__talkif_send')).toMatch(/separate cloud agent/)
+})
+
+test('talkif_setup, the tool: setup, the phone, the permissions that would stop a ring, and the options', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const world = fakeTalkif(on)
+  world.consent = true
+  on('tool.check', (_$, e) => ({ decision: e.tool === 'mcp__talkif__call_me' ? 'ask' : 'allow' }))
+  await startSession($)
+  await clock.settle()
+  const tool: `mcp__${string}__${string}` = 'mcp__talkif__talkif_setup'
+
+  // An older server without Talkif's setup check: no phone line, the rest as before.
+  const older = $.tool.call({ tool })
+  await clock.advance(5_000)
+  const before = String((await older).result)
+  expect(before).toMatch(/^Setup\n/)
+  expect(before).not.toMatch(/Phone:/)
+  expect(before).toMatch(/\[asks\] {4}call_me: stops at a permission prompt/)
+  expect(before).toMatch(/^  "mcp__talkif__call_me"$/m)
+  expect(before).toMatch(/keep {6}callTasks = read-only/)
+  expect(before).toMatch(/optional {2}folders: \(empty\) → \/home\/test\/app/)
+  expect(before).toMatch(/optional {2}flowId: \(empty\) → flow-1/)
+
+  // With it: the phone of the account's one person, and the account type for sharing.
+  world.setupReport = { ready: false, checks: [], account: { name: 'Talkif Phone', organization: false }, people: [{ userId: 'u-ada', name: 'Ada', phones: 0 }] }
+  const now = $.tool.call({ tool })
+  await clock.advance(5_000)
+  const after = String((await now).result)
+  expect(after).toMatch(/\[missing\] Phone: call_me rings Ada, who has no iPhone with the Talkif app signed in/)
+  expect(after).toMatch(/Next step: Install Talkif from the App Store/)
+  expect(after).toMatch(/keep {6}sharing = ask: a personal account/)
+  // It asked Talkif's own check with the key, as a plain MCP tool call.
+  const asked = world.requests.filter(r => r.path === '/mcp')
+  expect(asked.length).toBe(2)
+  expect(asked[0]?.body).toEqual({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'talkif_setup', arguments: {} } })
 })

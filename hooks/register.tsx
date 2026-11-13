@@ -48,6 +48,8 @@ import {
   submissionLines,
 } from './tasks'
 import type { TaskCard, TaskRequest } from './tasks'
+import { AWAY_TOOLS, SETUP_TOOL, SETUP_TOOL_SPEC, adviceLines, optionAdvice, parseServerSetup, permissionLines, phoneCheck } from './doctor'
+import type { ServerSetup, Verdict } from './doctor'
 
 // call_me rings the developer's phone through their Talkif voice agent (a
 // published flow with a Connectors node; backend POST /session-bridge/calls)
@@ -111,13 +113,17 @@ export const isMcpSessionTool = (tool: string): boolean => tool.startsWith('mcp_
 const MCP_SESSION_TOOL_NOTE =
   'Not for this Claude Code session: this Talkif tool acts as a separate cloud agent, so answers, questions and results would not come back here. ' +
   'Use SendMessage and ListAgents for other sessions, call_me to ring a person, and mcp__talkif__talkif_question, talkif_submit, talkif_decline, talkif_answer and talkif_review for tasks.'
+// The server's setup check is not a cloud agent's tool, but this plugin's own talkif_setup runs it and adds this session's checks.
+const MCP_SETUP_TOOL_NOTE =
+  "Not for this Claude Code session: use talkif_setup (mcp__talkif__talkif_setup) instead. It runs this check and adds this session's own: permissions and plugin options."
+export const mcpSessionToolNote = (tool: string): string => (tool.endsWith(`__${SETUP_TOOL}`) ? MCP_SETUP_TOOL_NOTE : MCP_SESSION_TOOL_NOTE)
 // They only send text back to Talkif about the task: allowed while a task runs read-only.
 const TASK_TOOL_NAMES: ReadonlySet<string> = new Set(TASK_TOOLS.map(t => taskToolName(t.name)))
 // Sessions messaging each other through Talkif: any computer, any agent.
 const PEERS_REFRESH_MS = 10 * 60_000
 // Sent as the User-Agent on every request to the backend and the bridge. Kept equal
 // to .claude-plugin/plugin.json's version: bump both together.
-export const VERSION = '0.30.6'
+export const VERSION = '0.30.8'
 const USER_AGENT = `talkif-claude/${VERSION}`
 // Debug pane: this session's bridge traffic, newest last (`/talkif traffic`; recorded only with the debug option).
 const TRAFFIC_PANE = 'talkif-traffic'
@@ -1414,14 +1420,75 @@ async function cmFirstRun($: EngineInterface): Promise<string> {
   return after.problem ? setupReport(checks) : cmLines(after)
 }
 
-async function cmSetup($: EngineInterface): Promise<string> {
+// The checks plus the phone, from Talkif's own setup check (the talkif_setup tool on
+// its MCP server); an older server without it leaves the phone out.
+type AccountSetup = { checks: Check[]; server: ServerSetup | undefined }
+
+async function accountSetup($: EngineInterface): Promise<AccountSetup> {
   const checks = await setupChecks($)
+  const server = await serverSetup($)
+  const phone = phoneCheck(server, await pickedRingUserId($))
+  return { checks: phone ? [...checks, phone] : checks, server }
+}
+
+async function serverSetup($: EngineInterface): Promise<ServerSetup | undefined> {
+  try {
+    const c = await loadCredentials($)
+    const key = (c.bridges.find(b => b.name === 'personal') ?? c.bridges[0])?.key
+    if (!key) return undefined
+    const res = await $.http.fetch(`${c.url}/api/v1/mcp`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'User-Agent': USER_AGENT },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: SETUP_TOOL, arguments: {} } }),
+    })
+    return res.ok && res.text ? parseServerSetup(JSON.parse(res.text)) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function pickedRingUserId($: EngineInterface): Promise<string | undefined> {
+  try {
+    const picked: unknown = await $.store.get(ringStoreKey((await loadEnv($)).url))
+    return isRingTarget(picked) ? picked.userId : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function cmSetup($: EngineInterface, setup?: AccountSetup): Promise<string> {
+  const { checks } = setup ?? (await accountSetup($))
   // A refusal the checks no longer see (an owner turned Connectors on, a key was
   // fixed) must not linger until the next retry: every paused loop tries again now.
   // One still refused pauses again with the live reason.
   await wakeAll($)
   const after = await currentState($)
   return [setupReport(checks), ...(await setupDetails($)), '', cmLines(after)].join('\n')
+}
+
+// talkif_setup, the tool: /talkif setup, then what /talkif setup cannot say for the person,
+// the Claude Code permissions that would stop a session while they are away and the options.
+async function agentSetup($: EngineInterface): Promise<string> {
+  const setup = await accountSetup($)
+  const report = await cmSetup($, setup)
+  const verdicts: Verdict[] = []
+  for (const t of AWAY_TOOLS) {
+    const v = await $.tool.check({ tool: t.tool, input: t.input })
+    verdicts.push({ tool: t.tool, decision: v.decision, ...(v.rule ? { rule: v.rule } : {}) })
+  }
+  const advice = optionAdvice(
+    { callTasks, callback: callbackOn, parallel: acceptParallel, sharing: optSharing, folders: optFolders, flowId: optFlowId, debug: debugMode },
+    { flow: optFlowId.trim() ? undefined : flow, cwd: sessionCwd, organization: setup.server?.organization },
+  )
+  return [
+    report,
+    '',
+    ...permissionLines(verdicts),
+    '',
+    ...adviceLines(advice),
+    '',
+    'This check only reads. Tell the person each next step in plain words; the plugin options are theirs to change.',
+  ].join('\n')
 }
 
 // After a wake: give the bridges a moment to register, so the line /talkif setup ends
@@ -1814,6 +1881,8 @@ async function homeOf($: EngineInterface): Promise<{ home: string }> {
 // Plugin option callTasks: 'read-only' (default) refuses tools that change
 // anything while a call task runs; 'session' leaves the session's own permissions.
 let callTasks: 'read-only' | 'session' = 'read-only'
+// The session's folder, from session.start: the folders suggestion of talkif_setup names it.
+let sessionCwd: string | undefined
 
 // The call task's turn of this session (set at turn.start, cleared at turn.complete) and
 // the subagents it started: read-only for good, also after the task's own turn ended
@@ -1944,7 +2013,7 @@ export const register: Register = (on, options) => {
     return inCallTask(e.parentAgentId) ? { deny: 'Talkif: the read-only guard for call tasks failed; the agent was not started.' } : next(e)
   })
   on('tool.call', ($, e, next) => {
-    if (isMcpSessionTool(e.tool)) return { deny: MCP_SESSION_TOOL_NOTE }
+    if (isMcpSessionTool(e.tool)) return { deny: mcpSessionToolNote(e.tool) }
     const denial = callTaskDenial(e)
     if (!denial) return next(e)
     void trace($, 'info', 'task', 'read-only', `refused ${e.tool}`)
@@ -1984,6 +2053,7 @@ export const register: Register = (on, options) => {
   })
 
   on('session.start', async ($, e, next) => {
+    sessionCwd = e.cwd
     // The folders option limits which sessions join (empty: every session).
     const { home } = await homeOf($)
     if (!folderAllowed(e.cwd, parseFolders(optFolders, home))) return next(e)
@@ -2012,6 +2082,7 @@ export const register: Register = (on, options) => {
       },
     }))
     for (const tool of TASK_TOOLS) await add(tool.name, $.tool.register({ ...tool, isDeferred: false }))
+    await add(SETUP_TOOL, $.tool.register({ ...SETUP_TOOL_SPEC, isDeferred: false }))
     if (refused.length) {
       // The plugin's tools are mcp__talkif__…: an MCP server the person added under the name
       // "talkif" (Talkif's own, added by hand before the plugin bundled it) owns that name.
@@ -2075,7 +2146,7 @@ export const register: Register = (on, options) => {
     return sent ? { result: sent } : r
   })
 
-  on('tool.describe', ($, e, next) => (isMcpSessionTool(e.tool) ? { description: MCP_SESSION_TOOL_NOTE, isDeferred: true } : next(e)))
+  on('tool.describe', ($, e, next) => (isMcpSessionTool(e.tool) ? { description: mcpSessionToolNote(e.tool), isDeferred: true } : next(e)))
 
   // The task tools: one move each on a task between sessions (delegation 2).
   on('tool.call', { tool: 'mcp__talkif__talkif_question' }, ($, e) => runTaskTool($, 'talkif_question', e)).catch(taskToolFailed)
@@ -2128,6 +2199,11 @@ export const register: Register = (on, options) => {
   }).catch(() => ({ result: 'call_me failed inside the mod.', isError: true }))
 
   on('command.run', { command: 'talkif' }, async ($, e) => ({ text: await cmRun($, e.args, e.presentation.columns) }))
+
+  on('tool.call', { tool: 'mcp__talkif__talkif_setup' }, async $ => ({ result: await agentSetup($) })).catch(() => ({
+    result: 'talkif_setup failed inside the mod. Ask the person to run /talkif setup instead.',
+    isError: true,
+  }))
 
 
   on('ui.render', { component: 'Pane', requestId: TRAFFIC_PANE }, async ($, e) => {
