@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.30.8 — 2026-11-13
+
+- **Tell Claude "set up Talkif".** A new tool, `talkif_setup`, runs the setup checks for Claude and adds what only the session knows: whether Claude Code would stop `call_me` or the task tools at a permission prompt, with the rule to add (run it again to see whether the rule took; allowing `call_me` means each ring, a billed call, goes out without asking first), and each plugin option with what to keep or change and why. It only reads: it does not reconnect, retry or change a setting.
+- **`/talkif setup` checks your phone.** It says whose phone `call_me` rings and whether that person has an iPhone with the Talkif app signed in. Needs the matching Talkif update; until then the line is left out. If Talkif cannot answer, the line says so instead of disappearing.
+- The version the plugin sends to Talkif matches the plugin's version again.
+
 ## 0.30.7 — 2026-11-13
 
 - **A call stays with the session it is about.** When a session rang you, what you say about that work goes to that session, and follow-ups stay with the connector you last reached, instead of being offered to every session. Needs the matching Talkif update; until then it behaves as before.

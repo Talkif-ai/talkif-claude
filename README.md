@@ -77,7 +77,28 @@ Next step: An owner or admin of the Talkif account turns Connectors on in the da
 Run /talkif setup again after each step.
 ```
 
-`/talkif setup` only reads. It never prints your key.
+`/talkif setup` never prints your key. Once Talkif's API has the setup check (it needs the matching Talkif update; until then the line is left out), it also says whether your phone can ring:
+
+```
+[missing] Phone: call_me rings Ada, who has no iPhone with the Talkif app signed in
+
+Next step: Install Talkif from the App Store on your iPhone and sign in with the same Talkif account. Until then call_me reaches only a Talkif app or dashboard that is open at that moment.
+```
+
+### Or let Claude set it up
+
+After step 2, tell Claude **"set up Talkif"**. It calls the plugin's `talkif_setup` tool, which runs the same checks as `/talkif setup` and adds what only this session knows:
+
+- **Permissions.** Whether Claude Code would stop `call_me` or the task tools at a permission prompt. While you are away nobody answers that prompt, so the session could not ring you. It names the rules to add, for example:
+
+  ```json
+  { "permissions": { "allow": ["mcp__talkif__call_me"] } }
+  ```
+
+  in `~/.claude/settings.json` (or `/permissions` → Allow). Run it again afterwards: it reads Claude Code's own decision, so it shows whether the rule took. Allowing `call_me` lets the session ring without asking first, and each ring is a billed call: to your phone, or to the person you picked with `/talkif ring`. The plugin needs no hook settings of yours.
+- **Options.** Each plugin option with what to keep or change and one reason: `callTasks`, `callback`, `parallel`, `sharing`, and optionally `folders` (this session's folder) and `flowId` (the voice agent your calls use now).
+
+The tool only reads: it does not reconnect, retry or change a setting. Claude tells you each step; pasting the key and changing options stay yours.
 
 ## Is it on?
 
@@ -235,6 +256,8 @@ It only answers questions, never takes tasks, and only you can reach it (it runs
 | `missing a permission`, although the key has **Full access** | Full access does not include Connectors. In Developer → Credentials, open the key, tick **Connectors** under Full access and save. The key itself stays the same. |
 | `this computer's IP address is not on the API key's allowlist` | Add your current IP address to the key, or remove the restriction. The plugin checks again every 30 seconds. |
 | `your Talkif account has no published flow with a Connectors node` | Add a Connectors node to an agent in the flow builder and publish it, or set `flowId`. |
+| `call_me` says it is ringing, but no phone rings | Run `/talkif setup` and look at the Phone line: call_me rings the Talkif app on an iPhone signed in to the same account. Without one, only a Talkif app or dashboard that is open at that moment rings. |
+| A session never rings you while you are away | Ask Claude to run `talkif_setup`: if `call_me` stops at a permission prompt, it names the rule to add. |
 | `the API key was refused (expired or revoked?)` | Create a new key and paste it in Configure options. |
 | `/talkif` is an unknown command in a session | The session's folder is not in the `folders` option. Add it, or empty the option. |
 | Your call does not reach the session | Call from the Talkif app while signed in, and check `/talkif` says `On`. |
