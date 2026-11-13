@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.30.9 — 2026-11-14
+
+- **A session outside a repository is named after its folder**, not "claude-code", so your voice agent can tell which one you mean (the home folder is called "home folder", never your user name). When no recap of a session's work could be written yet, the list says so and the plugin tries again within two minutes instead of fifteen.
+- **The phone agent says when it cannot see a session.** It no longer claims to know a session, route to it, or give it something unless a connector answered; it never says it gave a task without sending it; and a remark or a complaint is answered, not sent to a session as a task.
+- The plugin version shown to Talkif matches the manifest again. Run `/talkif publish` after updating so your flow gets the new instructions.
+
 ## 0.30.7 — 2026-11-13
 
 - **A call stays with the session it is about.** When a session rang you, what you say about that work goes to that session, and follow-ups stay with the connector you last reached, instead of being offered to every session. Needs the matching Talkif update; until then it behaves as before.

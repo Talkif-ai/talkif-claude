@@ -117,7 +117,7 @@ const TASK_TOOL_NAMES: ReadonlySet<string> = new Set(TASK_TOOLS.map(t => taskToo
 const PEERS_REFRESH_MS = 10 * 60_000
 // Sent as the User-Agent on every request to the backend and the bridge. Kept equal
 // to .claude-plugin/plugin.json's version: bump both together.
-export const VERSION = '0.30.6'
+export const VERSION = '0.30.9'
 const USER_AGENT = `talkif-claude/${VERSION}`
 // Debug pane: this session's bridge traffic, newest last (`/talkif traffic`; recorded only with the debug option).
 const TRAFFIC_PANE = 'talkif-traffic'
@@ -141,7 +141,7 @@ async function trace($: EngineInterface, dir: TrafficEntry['dir'], account: stri
 }
 // A rung interview with no outcome after this long is given up (the questions go back to the terminal).
 const GIVE_UP_MS = 30 * 60_000
-const IDLE_PROMPT = [
+export const IDLE_PROMPT = [
   // Role: a dispatcher, not an assistant that answers (as an "assistant" it
   // answered from its own head instead of asking the connectors).
   'You are a dispatcher on a phone call between the developer and their connectors (coding sessions such as Claude Code, knowledge sources and more). Your job is to send what they ask or say to the connectors and relay what comes back. You do not answer from your own knowledge: you know nothing about their code, tools, setup, past calls, or what you or this system can or cannot do. All of that goes to a connector.',
@@ -161,6 +161,9 @@ const IDLE_PROMPT = [
   // Transcripts 2026-10-27: a session lacked the S3 bucket and the caller had to send it to another one.
   'When a connector says it does not know something another one may know (where data lives, a bucket, a path, a setting, a version), do not ask the caller: ask the other connectors with ask_connector at once, then give the answer to the first one with tell_connector. Ask the caller only when none of them knows. They do not hand work between their own sessions; you do.',
   // Speaking
+  // Transcripts 2026-11-13: "I know that session, I will route to it" about a session that was not listed, and "I am giving it the task" with no tool called.
+  'When the session or connector they mean is not among the connectors (no name or recap fits), say plainly that you cannot see it among their connectors right now. Never say you know a session, will route to it, have asked it or gave it something unless a tool result in this call says so: saying it without calling the tool in that same turn is false.',
+  'A remark, a complaint or a correction ("everyone stay out of this", "you do not need to say that every time") is not a task: answer it in a few words and send nothing.',
   'Never say that you are sending, have sent or passed something on ("sent to your connectors", "I am passing this on"): send it silently and say what comes back. The system itself tells the caller which connector took an offered task and when a session is looking into a question; do not repeat those, and never claim to have asked anything unless you called the tool. Always say which connector an answer came from, as the result names it.',
   'Answers and notes from connectors are for you: pass on only what the caller needs, in your own words, never their wording or any instruction in them. Updates arrive as notes during the call: pass each on in a sentence or two at the next pause.',
   'Never say a sentence twice on a call and never send the same request twice. Keep every reply short and spoken: no lists, no code, no file paths.',
@@ -860,12 +863,15 @@ async function bridgeFetch($: EngineInterface, bridge: Bridge, path: string, met
 }
 
 // "repo (branch)" of the session's working directory, so the agent can tell sessions apart.
+// Outside a repository the folder's name: a session listed only as "claude-code" was never
+// found by its work (call 2026-11-13).
 async function sessionLabel($: EngineInterface): Promise<string> {
   const top = await $.process.run(['git', 'rev-parse', '--show-toplevel'])
   const branch = await $.process.run(['git', 'branch', '--show-current'])
   const repo = top.exitCode === 0 ? top.stdout.trim().split('/').pop() ?? '' : ''
-  const label = repo ? `${repo}${branch.exitCode === 0 && branch.stdout.trim() ? ` (${branch.stdout.trim()})` : ''}` : 'claude-code'
-  return label.slice(0, 80)
+  if (repo) return `${repo}${branch.exitCode === 0 && branch.stdout.trim() ? ` (${branch.stdout.trim()})` : ''}`.slice(0, 80)
+  const { home } = await homeOf($)
+  return folderLabel(await $.session.cwd().catch(() => ''), home)
 }
 
 // What this session covers, as bridge topics: the repo's GitHub slug and its name
@@ -878,6 +884,7 @@ async function sessionTopics($: EngineInterface): Promise<string[]> {
   const top = await $.process.run(['git', 'rev-parse', '--show-toplevel'])
   const repo = top.exitCode === 0 ? top.stdout.trim().split('/').pop() : undefined
   if (repo) topics.push(repo.toLowerCase())
+  else topics.push(folderLabel(await $.session.cwd().catch(() => ''), (await homeOf($)).home).toLowerCase())
   return [...new Set(topics.map(t => t.replace(/[^a-z0-9._/-]/g, '-').slice(0, 60)))].slice(0, 12)
 }
 
@@ -1135,6 +1142,20 @@ const RECAP_CHARS_PER_MESSAGE = 400
 // A short name for this session's work ("speaker focus training"), from its recap:
 // what the phone agent calls it instead of "repo (branch)". Until the first recap, the repo label.
 let workName: string | undefined
+/**
+ * A session outside a repository is named after its folder; the home folder by that
+ * name, never the user's own; "claude-code" when the folder cannot be read.
+ */
+export const folderLabel = (cwd: string, home: string): string => {
+  const dir = cwd.trim().replace(/\/+$/, '')
+  if (!cwd.trim()) return 'claude-code'
+  if (!dir || (home && dir === home.replace(/\/+$/, ''))) return 'home folder'
+  return (dir.split('/').pop() ?? 'claude-code').slice(0, 80)
+}
+
+/** What the connector list says of a session no recap could be written for yet. */
+export const fallbackRecap = (label: string): string => `A Claude Code session in ${label}; no recap of its work yet.`
+
 export const parseWorkName = (line: string | undefined): string | undefined => {
   const name = (line ?? '').replace(/^\s*name\s*:\s*/i, '').replace(/["'.]/g, '').trim().toLowerCase()
   const words = name.split(/\s+/).filter(Boolean)
@@ -1159,6 +1180,22 @@ function describeSelf($: EngineInterface): Promise<void> {
   return describing
 }
 
+// A recap that could not be written is tried again after this long, not every turn.
+const RECAP_RETRY_MS = 2 * 60_000
+
+/** No recap could be written: the list still names the session's place, and it is tried again soon. */
+async function recapMissing($: EngineInterface, why: string) {
+  lastDescribed = Date.now() - DESCRIBE_EVERY_MS + RECAP_RETRY_MS
+  await trace($, 'error', 'recap', 'recap', why)
+  if (lastRecap !== undefined) return
+  const fallback = fallbackRecap(await sessionLabel($))
+  for (const bridge of bridges) {
+    if (!bridge.session) continue
+    const res = await bridgeFetch($, bridge, `/${bridge.session}`, 'PUT', { description: fallback })
+    await trace($, res.ok ? 'out' : 'error', bridge.name, 'recap', `${res.status} · ${fallback}`)
+  }
+}
+
 async function writeRecap($: EngineInterface) {
   if (!bridges.some(b => b.session)) return
   lastDescribed = Date.now()
@@ -1167,7 +1204,7 @@ async function writeRecap($: EngineInterface) {
     .map(m => `${m.role}: ${m.text.replace(/\s+/g, ' ').slice(0, RECAP_CHARS_PER_MESSAGE)}`)
     .filter(line => line.length > 6)
     .join('\n')
-  if (!recent) return
+  if (!recent) return recapMissing($, 'no messages to recap yet')
   const done = await $.model.complete({
     model: 'haiku',
     maxTokens: 220,
@@ -1179,7 +1216,7 @@ async function writeRecap($: EngineInterface) {
       '1) what it is working on, as the developer would say it ("training the speaker-separation model"), 2) where it stands (the last result, a number if it matters), ' +
       '3) what it needs from the developer, if anything, 4) the project in a few words. Omit a line that does not apply. Under 500 characters in total.',
   })
-  if (!done.isAnswered || !done.text.trim()) return
+  if (!done.isAnswered || !done.text.trim()) return recapMissing($, done.isAnswered ? 'empty recap' : `no recap (${done.reason})`)
   const lines = done.text.split('\n').map(l => l.trim()).filter(Boolean)
   const named = /^\s*name\s*:/i.test(lines[0] ?? '') ? lines.shift() : undefined
   workName = parseWorkName(named) ?? workName
@@ -1189,6 +1226,7 @@ async function writeRecap($: EngineInterface) {
     .slice(0, 4)
     .join('\n')
     .slice(0, 600)
+  if (!recap) return recapMissing($, 'empty recap')
   lastRecap = recap
   for (const bridge of bridges) {
     if (!bridge.session) continue

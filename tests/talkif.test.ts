@@ -923,3 +923,37 @@ test('a wrong API URL option is never echoed, and a key pasted there is called o
   expect(p.next).toMatch(/revoke it/)
   expect(badUrlProblem('ftp://x').reason).not.toContain('ftp://x')
 })
+
+import { IDLE_PROMPT, folderLabel, fallbackRecap } from '../hooks/register'
+
+test('a session outside a repository is named after its folder, never the user name', async () => {
+  expect(folderLabel('/Users/ada/Development/talkif', '/Users/ada')).toBe('talkif')
+  expect(folderLabel('/Users/ada/notes/', '/Users/ada')).toBe('notes')
+  expect(folderLabel('/Users/ada', '/Users/ada')).toBe('home folder')
+  expect(folderLabel('/Users/ada/', '/Users/ada')).toBe('home folder')
+  expect(folderLabel('', '/Users/ada')).toBe('claude-code')
+  expect(fallbackRecap('talkif')).toBe('A Claude Code session in talkif; no recap of its work yet.')
+})
+
+test('the call prompt says when a session is not there, and never claims a hand-over it did not make', async () => {
+  expect(IDLE_PROMPT).toMatch(/cannot see it among their connectors/)
+  expect(IDLE_PROMPT).toMatch(/saying it without calling the tool in that same turn is false/)
+  expect(IDLE_PROMPT).toMatch(/is not a task: answer it in a few words and send nothing/)
+})
+
+test('a session with no recap yet is still described in the list, by its place', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const world = fakeTalkif(on)
+  world.consent = true
+  // A folder that is no repository (git answers 1 in this fake).
+  on('session.cwd', () => ({ value: '/home/test/notes' }))
+  await startSession($)
+  await clock.settle()
+  // No messages yet: nothing to recap, so the list gets the session's place instead of nothing.
+  const described = world.requests.filter(r => r.path === '/session-bridge/bridge-1' && r.method === 'PUT')
+  expect(described.length).toBe(1)
+  expect(described[0]?.body).toEqual({ description: 'A Claude Code session in notes; no recap of its work yet.' })
+  // And it registered under that name, not "claude-code".
+  expect(world.registerBodies[0]).toMatchObject({ label: 'notes', topics: ['notes'] })
+})
