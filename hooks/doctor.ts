@@ -13,7 +13,7 @@ export const SETUP_TOOL_SPEC = {
   name: SETUP_TOOL,
   description:
     'Check the Talkif setup of this Claude Code session and say what is missing: the API key, Connectors, the voice agent, whether the person\'s phone can ring, which Claude Code permissions would stop call_me or the task tools while the person is away, and suggested plugin options with one reason each. ' +
-    'Reads only and changes nothing: tell the person each next step (most are in app.talkif.ai or in /config → talkif), then call it again. Call it when the person asks to set up or check Talkif, or when call_me or a task tool fails.',
+    'Reads only: it does not reconnect, retry or change any setting. Tell the person each next step (most are in app.talkif.ai or in /config → talkif), then call it again. Call it when the person asks to set up or check Talkif, or when call_me or a task tool fails.',
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
 } as const
 
@@ -32,22 +32,35 @@ export type RingPerson = { userId: string; name: string | undefined; phones: num
 export type ServerSetup = { organization: boolean | undefined; people: RingPerson[] | undefined }
 
 /**
- * The JSON-RPC answer of tools/call talkif_setup, read for the account and the
- * people a ring reaches. `undefined` for anything else (an older server without
- * the tool answers "Unknown tool").
+ * Talkif's answer to the setup check: the report; `absent`, a server without the
+ * check ("Unknown tool"); or `failed`, anything else, with why. Only `absent`
+ * leaves the phone line out: a failure is said, not hidden.
  */
-export function parseServerSetup(body: unknown): ServerSetup | undefined {
-  if (!isRecord(body) || !isRecord(body.result) || body.result.isError === true) return undefined
+export type ServerAnswer = { kind: 'ok'; setup: ServerSetup } | { kind: 'absent' } | { kind: 'failed'; reason: string }
+
+const UNEXPECTED = 'Talkif sent an unexpected setup answer'
+
+/** The JSON-RPC answer of tools/call talkif_setup, read for the account and the people a ring reaches. */
+export function parseServerSetup(body: unknown): ServerAnswer {
+  if (!isRecord(body)) return { kind: 'failed', reason: UNEXPECTED }
+  if (isRecord(body.error)) {
+    const message = typeof body.error.message === 'string' ? body.error.message : ''
+    if (body.error.code === -32602 && /^Unknown tool/.test(message)) return { kind: 'absent' }
+    return { kind: 'failed', reason: message.slice(0, 120) || UNEXPECTED }
+  }
+  if (!isRecord(body.result)) return { kind: 'failed', reason: UNEXPECTED }
   const content = body.result.content
   const first: unknown = Array.isArray(content) ? content[0] : undefined
-  if (!isRecord(first) || typeof first.text !== 'string') return undefined
+  const text = isRecord(first) && typeof first.text === 'string' ? first.text : undefined
+  if (text === undefined) return { kind: 'failed', reason: UNEXPECTED }
+  if (body.result.isError === true) return { kind: 'failed', reason: text.slice(0, 120) }
   let report: unknown
   try {
-    report = JSON.parse(first.text)
+    report = JSON.parse(text)
   } catch {
-    return undefined
+    return { kind: 'failed', reason: UNEXPECTED }
   }
-  if (!isRecord(report) || !Array.isArray(report.checks)) return undefined
+  if (!isRecord(report) || !Array.isArray(report.checks)) return { kind: 'failed', reason: UNEXPECTED }
   const account = isRecord(report.account) ? report.account : {}
   const people = Array.isArray(report.people)
     ? report.people.flatMap(p =>
@@ -56,7 +69,17 @@ export function parseServerSetup(body: unknown): ServerSetup | undefined {
           : [],
       )
     : undefined
-  return { organization: typeof account.organization === 'boolean' ? account.organization : undefined, people }
+  return { kind: 'ok', setup: { organization: typeof account.organization === 'boolean' ? account.organization : undefined, people } }
+}
+
+/**
+ * Whether the session reaches an organization: true when any account it joins is
+ * one, false when Talkif said of every account that it is not, else not known.
+ */
+export function anyOrganization(answers: readonly ServerAnswer[]): boolean | undefined {
+  const known = answers.flatMap(a => (a.kind === 'ok' && a.setup.organization !== undefined ? [a.setup.organization] : []))
+  if (known.includes(true)) return true
+  return known.length > 0 && known.length === answers.length ? false : undefined
 }
 
 export const INSTALL_APP_STEP =
@@ -70,10 +93,12 @@ const phones = (n: number): string =>
  * The phone check: whose phone call_me rings (the only person, or the one picked
  * with /talkif ring) and whether it can ring. `undefined` when Talkif did not say.
  */
-export function phoneCheck(server: ServerSetup | undefined, pickedUserId: string | undefined): Check | undefined {
-  const people = server?.people
-  if (!people) return undefined
+export function phoneCheck(answer: ServerAnswer, pickedUserId: string | undefined): Check | undefined {
   const name = 'Phone'
+  if (answer.kind === 'absent') return undefined
+  if (answer.kind === 'failed') return { name, ok: false, detail: `could not check (${answer.reason})`, next: 'Run /talkif setup again in a minute.' }
+  const people = answer.setup.people
+  if (!people) return undefined
   const who = (p: RingPerson) => p.name ?? 'the account\'s person'
   if (people.length === 0) {
     return { name, ok: false, detail: 'nobody in this account takes calls', next: 'Only an owner, admin or member takes calls: sign in to the Talkif app as one of them.' }
@@ -97,7 +122,7 @@ type McpToolName = `mcp__${string}__${string}`
 
 /** The plugin's tools a session uses while the person is away: ringing, and reporting on tasks. */
 export const AWAY_TOOLS: ReadonlyArray<{ tool: McpToolName; input: Record<string, unknown>; why: string }> = [
-  { tool: 'mcp__talkif__call_me', input: { questions: ['A question'] }, why: 'rings you when the session needs a decision' },
+  { tool: 'mcp__talkif__call_me', input: { questions: ['A question'] }, why: 'rings a phone when the session needs a decision' },
   { tool: 'mcp__talkif__talkif_question', input: { taskId: 't', text: 'q' }, why: 'asks back on a task instead of guessing' },
   { tool: 'mcp__talkif__talkif_submit', input: { taskId: 't', summary: 's', evidence: [], notVerified: [] }, why: 'hands in a finished task' },
   { tool: 'mcp__talkif__talkif_decline', input: { taskId: 't', reason: 'r' }, why: 'declines a task it cannot do' },
@@ -126,8 +151,14 @@ export function permissionLines(verdicts: readonly Verdict[]): string[] {
     lines.push(
       'To let them run while you are away, add these to "permissions" → "allow" in ~/.claude/settings.json (or /permissions → Allow):',
       `  ${asking.map(t => JSON.stringify(t)).join(', ')}`,
-      'They only send text to Talkif or ring a phone in your Talkif account; Talkif\'s API tools (placing calls, editing agents) keep their own permissions.',
+      'Run this check again afterwards: it reads Claude Code\'s own decision, so it shows whether the rule took.',
     )
+    if (asking.includes('mcp__talkif__call_me')) {
+      lines.push(
+        'Allowed, call_me rings without asking first: each ring is a billed call through your voice agent, to your own phone, or to the person picked with /talkif ring when you picked one.',
+      )
+    }
+    lines.push('The task tools only send text to Talkif. Talkif\'s API tools (placing calls, editing agents) keep their own permissions.')
   }
   return lines
 }

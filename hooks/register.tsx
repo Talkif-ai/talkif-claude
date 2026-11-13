@@ -48,8 +48,8 @@ import {
   submissionLines,
 } from './tasks'
 import type { TaskCard, TaskRequest } from './tasks'
-import { AWAY_TOOLS, SETUP_TOOL, SETUP_TOOL_SPEC, adviceLines, optionAdvice, parseServerSetup, permissionLines, phoneCheck } from './doctor'
-import type { ServerSetup, Verdict } from './doctor'
+import { AWAY_TOOLS, SETUP_TOOL, SETUP_TOOL_SPEC, adviceLines, anyOrganization, optionAdvice, parseServerSetup, permissionLines, phoneCheck } from './doctor'
+import type { ServerAnswer, Verdict } from './doctor'
 
 // call_me rings the developer's phone through their Talkif voice agent (a
 // published flow with a Connectors node; backend POST /session-bridge/calls)
@@ -1421,29 +1421,38 @@ async function cmFirstRun($: EngineInterface): Promise<string> {
 }
 
 // The checks plus the phone, from Talkif's own setup check (the talkif_setup tool on
-// its MCP server); an older server without it leaves the phone out.
-type AccountSetup = { checks: Check[]; server: ServerSetup | undefined }
+// its MCP server); an older server without it leaves the phone out. `live`: /talkif
+// setup also refreshes what it finds stale (the flow pick, a stale "no flow"); the
+// talkif_setup tool only reads.
+type AccountSetup = { checks: Check[]; flow: FlowRef | undefined; answers: ServerAnswer[] }
 
-async function accountSetup($: EngineInterface): Promise<AccountSetup> {
-  const checks = await setupChecks($)
-  const server = await serverSetup($)
-  const phone = phoneCheck(server, await pickedRingUserId($))
-  return { checks: phone ? [...checks, phone] : checks, server }
+async function accountSetup($: EngineInterface, live: boolean): Promise<AccountSetup> {
+  const { checks, flow: used } = await readSetup($, live)
+  // Each account the session joins: the first (personal) one is whose phone call_me rings.
+  const answers: ServerAnswer[] = []
+  for (const bridge of credentials?.bridges ?? []) answers.push(await serverSetup($, bridge.key))
+  const phone = answers[0] ? phoneCheck(answers[0], await pickedRingUserId($)) : undefined
+  return { checks: phone ? [...checks, phone] : checks, flow: used, answers }
 }
 
-async function serverSetup($: EngineInterface): Promise<ServerSetup | undefined> {
+async function serverSetup($: EngineInterface, key: string): Promise<ServerAnswer> {
   try {
-    const c = await loadCredentials($)
-    const key = (c.bridges.find(b => b.name === 'personal') ?? c.bridges[0])?.key
-    if (!key) return undefined
-    const res = await $.http.fetch(`${c.url}/api/v1/mcp`, {
+    const { url } = await loadEnv($)
+    const res = await $.http.fetch(`${url}/api/v1/mcp`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'User-Agent': USER_AGENT },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: SETUP_TOOL, arguments: {} } }),
     })
-    return res.ok && res.text ? parseServerSetup(JSON.parse(res.text)) : undefined
-  } catch {
-    return undefined
+    if (!res.ok) return { kind: 'failed', reason: `Talkif answered ${res.status}` }
+    let body: unknown
+    try {
+      body = JSON.parse(res.text)
+    } catch {
+      return { kind: 'failed', reason: 'Talkif sent an answer that is not JSON' }
+    }
+    return parseServerSetup(body)
+  } catch (err) {
+    return { kind: 'failed', reason: String(err).replace(/^(HooksError: )?talkif: /, '').slice(0, 120) }
   }
 }
 
@@ -1456,8 +1465,8 @@ async function pickedRingUserId($: EngineInterface): Promise<string | undefined>
   }
 }
 
-async function cmSetup($: EngineInterface, setup?: AccountSetup): Promise<string> {
-  const { checks } = setup ?? (await accountSetup($))
+async function cmSetup($: EngineInterface): Promise<string> {
+  const { checks } = await accountSetup($, true)
   // A refusal the checks no longer see (an owner turned Connectors on, a key was
   // fixed) must not linger until the next retry: every paused loop tries again now.
   // One still refused pauses again with the live reason.
@@ -1469,8 +1478,9 @@ async function cmSetup($: EngineInterface, setup?: AccountSetup): Promise<string
 // talkif_setup, the tool: /talkif setup, then what /talkif setup cannot say for the person,
 // the Claude Code permissions that would stop a session while they are away and the options.
 async function agentSetup($: EngineInterface): Promise<string> {
-  const setup = await accountSetup($)
-  const report = await cmSetup($, setup)
+  // No wake here, unlike /talkif setup: calling the tool never cuts a retry short or registers the session.
+  const setup = await accountSetup($, false)
+  const report = [setupReport(setup.checks), ...(await setupDetails($)), '', cmLines(await currentState($))].join('\n')
   const verdicts: Verdict[] = []
   for (const t of AWAY_TOOLS) {
     const v = await $.tool.check({ tool: t.tool, input: t.input })
@@ -1478,7 +1488,7 @@ async function agentSetup($: EngineInterface): Promise<string> {
   }
   const advice = optionAdvice(
     { callTasks, callback: callbackOn, parallel: acceptParallel, sharing: optSharing, folders: optFolders, flowId: optFlowId, debug: debugMode },
-    { flow: optFlowId.trim() ? undefined : flow, cwd: sessionCwd, organization: setup.server?.organization },
+    { flow: optFlowId.trim() ? undefined : setup.flow, cwd: sessionCwd, organization: anyOrganization(setup.answers) },
   )
   return [
     report,
@@ -1507,13 +1517,18 @@ async function wakeAll($: EngineInterface) {
 }
 
 async function setupChecks($: EngineInterface): Promise<Check[]> {
+  return (await readSetup($, true)).checks
+}
+
+async function readSetup($: EngineInterface, live: boolean): Promise<{ checks: Check[]; flow: FlowRef | undefined }> {
   const checks: Check[] = []
+  const done = (used?: FlowRef) => ({ checks, flow: used })
   let c: Credentials
   try {
     c = await loadCredentials($)
   } catch (err) {
     checks.push({ name: 'API key', ok: false, detail: err instanceof SetupProblem ? err.problem.reason : String(err), next: KEY_STEP })
-    return checks
+    return done()
   }
   checks.push({
     name: 'API key',
@@ -1529,20 +1544,20 @@ async function setupChecks($: EngineInterface): Promise<Check[]> {
   if (!bridgeKey) {
     checks.push({ name: 'Backend', ok: true, detail: `${c.url} (${where})` })
     checks.push({ name: 'Connectors', ok: false, detail: `no TALKIF_BRIDGE_KEY in ${devFileName}`, next: KEY_STEP })
-    return checks
+    return done()
   }
 
   // The consent read doubles as the reachability and Connectors-scope check.
   const consent = await probe($, c.url, bridgeKey, '/connectors/consent')
   if (typeof consent === 'string') {
     checks.push({ name: 'Backend', ok: false, detail: `${c.url} (${where}) could not be reached: ${consent.slice(0, 160)}`, next: 'Check the network. The API URL option should be empty unless Talkif support gave you another address.' })
-    return checks
+    return done()
   }
   checks.push({ name: 'Backend', ok: true, detail: `${c.url} (${where})` })
   const parsed = consent.status === 200 ? parseConsent(consent.body) : undefined
   // The consent read names the account too: shown from now on where the register answer did not.
   const probed = bridges.find(b => b.key === bridgeKey)
-  if (parsed?.accountName && probed && !probed.accountName) {
+  if (live && parsed?.accountName && probed && !probed.accountName) {
     probed.accountName = parsed.accountName
     await refreshStatus($)
   }
@@ -1561,7 +1576,7 @@ async function setupChecks($: EngineInterface): Promise<Check[]> {
         ? { name: 'Flow', ok: false, detail: listed.slice(0, 160), next: 'Try /talkif setup again in a minute.' }
         : failedProbe('Flow', 'Read on the flows row', listed.status, listed.text),
     )
-    return checks
+    return done()
   }
   const published = publishedFlows(listed.body)
   const fromOption = optFlowId.trim()
@@ -1574,7 +1589,7 @@ async function setupChecks($: EngineInterface): Promise<Check[]> {
           ? { name: 'Flow', ok: false, detail: `the flowId option (${fromOption}) is not a flow in this account`, next: 'Fix flowId in /config → talkif, or empty it so the plugin picks the first published flow with a Connectors node.' }
           : failedProbe('Flow', 'Read on the flows row', one.status, one.text),
       )
-      return checks
+      return done()
     }
     const detail = isRecord(one.body) ? one.body : {}
     const name = typeof detail.name === 'string' && detail.name ? detail.name : fromOption
@@ -1585,14 +1600,23 @@ async function setupChecks($: EngineInterface): Promise<Check[]> {
     } else {
       checks.push({ name: 'Flow', ok: true, detail: `"${name}" (${fromOption}, the flowId option)` })
     }
-    return checks
+    return done({ id: fromOption, name })
   }
   // The same pick the calls use (remembered, else the first Connectors flow), looked up again now.
-  flowRetryAt = 0
-  if (setupProblem?.reason === NO_FLOW_PROBLEM.reason) setupProblem = undefined
-  if (flow && !(await flowDefinition($, flow.id).then(hasConnectorsNode, () => false))) flow = undefined
-  const used = await resolveFlow($).catch(() => undefined)
-  const how = flowFrom === 'remembered' ? 'picked earlier' : 'the first published flow with a Connectors node'
+  // Read only: the flow in use when it still has a Connectors node, else the one calls would pick.
+  const stillThere = flow !== undefined && (await flowDefinition($, flow.id).then(hasConnectorsNode, () => false))
+  let used: FlowRef | undefined
+  let how: string
+  if (live) {
+    flowRetryAt = 0
+    if (setupProblem?.reason === NO_FLOW_PROBLEM.reason) setupProblem = undefined
+    if (!stillThere) flow = undefined
+    used = await resolveFlow($).catch(() => undefined)
+    how = flowFrom === 'remembered' ? 'picked earlier' : 'the first published flow with a Connectors node'
+  } else {
+    used = stillThere ? flow : await pickConnectorsFlow(published, id => flowDefinition($, id).catch(() => undefined))
+    how = stillThere ? 'in use' : 'the first published flow with a Connectors node'
+  }
   checks.push(
     used
       ? { name: 'Flow', ok: true, detail: `"${used.name}" (${used.id}, ${how}; set flowId in /config → talkif to choose another)` }
@@ -1603,7 +1627,7 @@ async function setupChecks($: EngineInterface): Promise<Check[]> {
           next: FLOW_STEP,
         },
   )
-  return checks
+  return done(used)
 }
 
 async function cmStatus($: EngineInterface): Promise<string> {
@@ -2035,7 +2059,8 @@ export const register: Register = (on, options) => {
   on('tool.check', async ($, e, next) => {
     const result = await next(e)
     const turnId = scope.turnId
-    if (result.decision !== 'ask' || !turnId || e.agentId) return result
+    // A query ($.tool.check, as talkif_setup's permission probes) carries no tool_use_id: nothing waits on it.
+    if (result.decision !== 'ask' || !turnId || e.agentId || e.tool_use_id === undefined) return result
     const work = [...callWork.values()].find(w => w.turnId === turnId)
     const what = isRecord(e.input) && typeof e.input.command === 'string' ? `${e.tool}: ${e.input.command}` : e.tool
     if (work) {

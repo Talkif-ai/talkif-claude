@@ -2,9 +2,8 @@
 
 ## 0.30.8 — 2026-11-13
 
-- **Tell Claude "set up Talkif".** A new tool, `talkif_setup`, runs the setup checks for Claude and adds what only the session knows: whether Claude Code would stop `call_me` or the task tools at a permission prompt (with the exact rule to allow them), and each plugin option with what to keep or change and why. It only reads; you make the changes.
-- **`/talkif setup` checks your phone.** With a Talkif API that has the setup check, it says whose phone `call_me` rings and whether that person has an iPhone with the Talkif app signed in; without one, only an open Talkif app or dashboard rings.
-- **Other agents.** The README shows how Codex and Grok sign in to Talkif without an API key, and how they run the same check.
+- **Tell Claude "set up Talkif".** A new tool, `talkif_setup`, runs the setup checks for Claude and adds what only the session knows: whether Claude Code would stop `call_me` or the task tools at a permission prompt, with the rule to add (run it again to see whether the rule took; allowing `call_me` means each ring, a billed call, goes out without asking first), and each plugin option with what to keep or change and why. It only reads: it does not reconnect, retry or change a setting.
+- **`/talkif setup` checks your phone.** It says whose phone `call_me` rings and whether that person has an iPhone with the Talkif app signed in. Needs the matching Talkif update; until then the line is left out. If Talkif cannot answer, the line says so instead of disappearing.
 - The version the plugin sends to Talkif matches the plugin's version again.
 
 ## 0.30.7 — 2026-11-13

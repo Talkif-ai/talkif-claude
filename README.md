@@ -77,7 +77,7 @@ Next step: An owner or admin of the Talkif account turns Connectors on in the da
 Run /talkif setup again after each step.
 ```
 
-`/talkif setup` only reads. It never prints your key. With a Talkif API that has the setup check, it also says whether your phone can ring:
+`/talkif setup` never prints your key. Once Talkif's API has the setup check (it needs the matching Talkif update; until then the line is left out), it also says whether your phone can ring:
 
 ```
 [missing] Phone: call_me rings Ada, who has no iPhone with the Talkif app signed in
@@ -89,16 +89,16 @@ Next step: Install Talkif from the App Store on your iPhone and sign in with the
 
 After step 2, tell Claude **"set up Talkif"**. It calls the plugin's `talkif_setup` tool, which runs the same checks as `/talkif setup` and adds what only this session knows:
 
-- **Permissions.** Whether Claude Code would stop `call_me` or the task tools at a permission prompt. While you are away nobody answers that prompt, so the session could not ring you. It names the exact rules to add, for example:
+- **Permissions.** Whether Claude Code would stop `call_me` or the task tools at a permission prompt. While you are away nobody answers that prompt, so the session could not ring you. It names the rules to add, for example:
 
   ```json
   { "permissions": { "allow": ["mcp__talkif__call_me"] } }
   ```
 
-  in `~/.claude/settings.json` (or `/permissions` → Allow). Run it again afterwards: it reads the live decision, so it shows when the rule works. The plugin needs no hook settings of yours.
+  in `~/.claude/settings.json` (or `/permissions` → Allow). Run it again afterwards: it reads Claude Code's own decision, so it shows whether the rule took. Allowing `call_me` lets the session ring without asking first, and each ring is a billed call: to your phone, or to the person you picked with `/talkif ring`. The plugin needs no hook settings of yours.
 - **Options.** Each plugin option with what to keep or change and one reason: `callTasks`, `callback`, `parallel`, `sharing`, and optionally `folders` (this session's folder) and `flowId` (the voice agent your calls use now).
 
-The tool only reads. Claude tells you each step; pasting the key and changing options stay yours.
+The tool only reads: it does not reconnect, retry or change a setting. Claude tells you each step; pasting the key and changing options stay yours.
 
 ## Is it on?
 
@@ -221,30 +221,6 @@ Change them in `/config` → talkif. The API key is in `/plugin` → Installed �
 | `callback` | on | ring you when a task from a call ends after you hung up |
 | `parallel` | off | queue more tasks from a call while one runs, instead of saying "still on the last task" |
 | `debug` | off | record this session's traffic for `/talkif traffic` |
-
-## Other agents
-
-Other agents connect to Talkif's MCP server, `https://api.talkif.ai/api/v1/mcp`, and sign in with your Talkif account: no key to paste. You approve the sign-in in the Talkif dashboard, and it shows under **Developer → Connected apps**, where you can remove it.
-
-A signed-in agent gets the Connectors tools: it sees your sessions, asks them questions and hands them tasks (`talkif_sessions`, `talkif_send`, `talkif_inbox`, …), and can ring your phone with `talkif_call_me`. It also gets `talkif_setup`. Signing in does not give the Talkif API tools (flows, calls, contacts); for those, connect with an API key header instead.
-
-The account needs the same as above: Connectors turned on, and a published flow with a Connectors node.
-
-**Codex CLI**
-
-```
-codex mcp add talkif --url https://api.talkif.ai/api/v1/mcp
-```
-
-Codex opens Talkif's sign-in page in your browser; approve it there. To sign in again later: `codex mcp login talkif`.
-
-**Grok** (grok.com)
-
-Add a custom connector named `Talkif` with the server URL `https://api.talkif.ai/api/v1/mcp`, then sign in and approve.
-
-**Then, in any of them**, say **"set up Talkif"**. The agent calls `talkif_setup`, which says what this connection reaches, what is missing (Connectors, the voice agent, your phone) and the exact next step, with values for this account: which `flowId` and, in an account of several people, which `ringUserId` `talkif_call_me` needs.
-
-For Claude Code, use this plugin instead of adding the server by hand: it brings the server and makes the session itself reachable.
 
 ## Other connectors
 
