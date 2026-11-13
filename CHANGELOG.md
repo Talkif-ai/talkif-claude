@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.30.7 — 2026-11-13
+
+- **A call stays with the session it is about.** When a session rang you, what you say about that work goes to that session, and follow-ups stay with the connector you last reached, instead of being offered to every session. Needs the matching Talkif update; until then it behaves as before.
+- **Less talk around sending.** The assistant no longer announces that it is sending something or says "Mm-hm" while you speak: it sends, and tells you what came back.
+- **Sessions know they can ring you.** The session guide now says when to use `call_me`: blocked on a decision only you can make while you are away, or when you asked for a call.
+- Run `/talkif publish` after updating so your flow gets the new instructions.
+
 ## 0.30.6 — 2026-11-01
 
 - **Security: a value typed into the wrong option is never shown back.** An API key pasted into the API URL option used to appear in full in `/talkif`; now it says the field holds a key, asks you to revoke that key, and shows nothing of it.
