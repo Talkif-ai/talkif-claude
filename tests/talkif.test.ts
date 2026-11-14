@@ -402,6 +402,8 @@ function fakeTalkif(on: On) {
     logs: [] as string[],
     nextUrls: [] as string[],
     sendsEnds: true,
+    // More fields of the register answer (a newer Talkif's, e.g. lead).
+    registerAnswer: {} as Record<string, unknown>,
     // Every request after registering: method, path and body.
     requests: [] as { method: string; path: string; body: unknown }[],
     // GET /calls/{id}/transcript: the status it answers with.
@@ -433,7 +435,7 @@ function fakeTalkif(on: On) {
       if (!world.consent) return refused
       world.registers += 1
       world.registerBodies.push(JSON.parse(e.init?.body ?? '{}'))
-      return json(200, { sessionId: 'bridge-1', accountName: 'Talkif Phone', ...(world.sendsEnds ? { callEnds: true } : {}) })
+      return json(200, { sessionId: 'bridge-1', accountName: 'Talkif Phone', ...(world.sendsEnds ? { callEnds: true } : {}), ...world.registerAnswer })
     }
     if (path === '/session-bridge/bridge-1/next') {
       if (!world.consent) return refused
@@ -1254,4 +1256,127 @@ test('away: typing first means no ring; a question dialog rings like a question;
   await clock.advance(60_000)
   expect(rings().length).toBe(1)
   expect(rings()[0]?.body).not.toHaveProperty('ringUserId')
+})
+
+// ---- The lead: one session answers for all of the developer's sessions ----
+
+import { LEAD_CONTEXT, LEAD_ENDED_CONTEXT, leadLine, leadRefusal, parseLead, parseLeadArg } from '../hooks/lead'
+import { askPrompt } from '../hooks/register'
+
+test('lead: Talkif says yes or no, the command takes on or off, the lists mark it', async () => {
+  expect(parseLead({ lead: true })).toBe(true)
+  expect(parseLead({ lead: false })).toBe(false)
+  // A Talkif without leads says nothing: unknown, not "no".
+  expect(parseLead({})).toBe(undefined)
+  expect(parseLead({ lead: 'yes' })).toBe(undefined)
+  expect(parseLeadArg(undefined)).toBe(true)
+  expect(parseLeadArg(' On ')).toBe(true)
+  expect(parseLeadArg('off')).toBe(false)
+  expect(parseLeadArg('deploy')).toBe(undefined)
+  expect(leadLine(true)).toMatch(/^Lead: this session answers for all of your sessions/)
+  expect(leadLine(false)).toMatch(/offered to all of your sessions again/)
+  expect(leadRefusal(403, 'Several people take calls in this account')).toBe('Talkif did not take it: Several people take calls in this account')
+  expect(leadRefusal(429, '')).toMatch(/Too many/)
+  expect(statusText(state({ lead: true }))).toBe('Talkif: on, lead · Acme')
+  expect(statusText(state({ lead: true, away: true }))).toBe('Talkif: on, away, lead · Acme')
+  expect(cmLines(state({ lead: true }))).toMatch(/This session is your lead/)
+  expect(cmLines(state({}))).not.toMatch(/lead/)
+  const peers = parsePeers({ sessions: [{ session_id: 'a', label: 'deploy', handles: ['ask'], lead: true }, { session_id: 'b', label: 'web', handles: ['ask'], lead: false }] })
+  expect(peerLines(peers)).toBe('- deploy [the lead; takes: ask]\n- web [takes: ask]')
+  // The guide never claims another session's state on its own.
+  expect(LEAD_CONTEXT).toMatch(/Never say what another session did/)
+  expect(LEAD_CONTEXT).toMatch(/SendMessage/)
+  // A call's question to the lead carries the other sessions' own words, fenced; others get none.
+  const asked = askPrompt('what is waiting on me?', undefined, undefined, peers)
+  expect(asked).toMatch(/You are the developer's lead session/)
+  expect(asked).toContain('<session-recap untrusted="true">\n- deploy [the lead; takes: ask]')
+  expect(askPrompt('what is waiting on me?', undefined)).not.toMatch(/lead session/)
+  expect(askPrompt('ok?', undefined, 'web', peers)).not.toMatch(/lead session/)
+  expect(askPrompt('what is waiting on me?', undefined, undefined, [])).toMatch(/No other session of theirs is reachable/)
+})
+
+/** Talkif's lead, answered before fakeTalkif's own routes. */
+function fakeLead(world: ReturnType<typeof fakeTalkif>, answer: { status: number; body: unknown } = { status: 200, body: undefined }) {
+  const lead = { puts: [] as unknown[] }
+  world.registerAnswer = { lead: false }
+  world.extra = (method, path, body) => {
+    if (path === '/session-bridge/bridge-1/lead' && method === 'PUT') {
+      lead.puts.push(body)
+      const on = typeof body === 'object' && body !== null && 'lead' in body && body.lead === true
+      return fakeJson(answer.status, answer.body ?? { lead: on })
+    }
+    return undefined
+  }
+  return lead
+}
+
+test('/talkif lead tells Talkif; the status line and the next message know, once per change', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const world = fakeTalkif(on)
+  const lead = fakeLead(world)
+  world.consent = true
+  const contexts: (readonly string[] | undefined)[] = []
+  on('prompt.submit', (_$, e) => {
+    contexts.push(e.context)
+    return { drop: 'captured by the test' }
+  })
+  await startSession($)
+  await clock.settle()
+  expect(world.registerBodies[0]).toMatchObject({ lead: true })
+  // Not the lead: switching it off asks Talkif nothing.
+  expect(await cm($, 'lead off')).toBe(leadLine(false))
+  expect(lead.puts).toEqual([])
+  expect(await cm($, 'lead')).toBe(leadLine(true))
+  expect(lead.puts).toEqual([{ lead: true }])
+  expect(await cm($, '')).toMatch(/This session is your lead/)
+  await $.prompt.submit({ text: 'keep going', origin: { kind: 'composer' }, wait: false })
+  await $.prompt.submit({ text: 'and then', origin: { kind: 'composer' }, wait: false })
+  const said = (i: number) => (contexts[i] ?? []).join('\n')
+  expect(said(0)).toContain(LEAD_CONTEXT)
+  expect(said(1)).not.toContain(LEAD_CONTEXT)
+  // Another session took over (a lead turn): no turn started, the next message hears it.
+  world.deliver({ requestId: 'l1', callId: '00000000-0000-0000-0000-000000000000', messages: [], kind: 'lead', lead: false })
+  await clock.settle()
+  expect(contexts.length).toBe(2)
+  expect(world.requests.some(r => r.path.endsWith('/reply'))).toBe(false)
+  await $.prompt.submit({ text: 'next', origin: { kind: 'composer' }, wait: false })
+  expect(said(2)).toContain(LEAD_ENDED_CONTEXT)
+  expect(await cm($, '')).not.toMatch(/your lead/)
+  // Made lead on a call: the same.
+  world.deliver({ requestId: 'l2', callId: 'call-1', messages: [], kind: 'lead', lead: true })
+  await clock.settle()
+  await $.prompt.submit({ text: 'again', origin: { kind: 'composer' }, wait: false })
+  expect(said(3)).toContain(LEAD_CONTEXT)
+  expect(await cm($, 'lead off')).toBe(leadLine(false))
+  expect(lead.puts).toEqual([{ lead: true }, { lead: false }])
+  expect(await cm($, 'lead deploy')).toMatch(/^Usage: \/talkif lead/)
+})
+
+test('/talkif lead with a shared key or an older Talkif says why and changes nothing', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const world = fakeTalkif(on)
+  const message = 'Several people take calls in this account, so an API key does not say whose lead this is.'
+  const lead = fakeLead(world, { status: 403, body: { code: 'forbidden', detail: message } })
+  world.consent = true
+  await startSession($)
+  await clock.settle()
+  expect(await cm($, 'lead')).toBe(`Talkif did not take it: ${message}`)
+  expect(lead.puts).toEqual([{ lead: true }])
+  expect(await cm($, '')).not.toMatch(/your lead/)
+})
+
+test('/talkif lead with a Talkif that does not know leads sends nothing', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const world = fakeTalkif(on)
+  const lead = fakeLead(world)
+  // Its register answer has no lead field.
+  world.registerAnswer = {}
+  world.consent = true
+  await startSession($)
+  await clock.settle()
+  expect(await cm($, 'lead')).toMatch(/does not know lead sessions yet/)
+  expect(lead.puts).toEqual([])
 })

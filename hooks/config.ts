@@ -334,6 +334,8 @@ export type TalkifState = {
   flowName: string | undefined
   /** The developer set themselves away (here or on a call): sessions ring instead of waiting. */
   away?: boolean
+  /** This session is the developer's lead: it answers for all of their sessions. */
+  lead?: boolean
 }
 
 const sentence = (text: string): string => {
@@ -352,7 +354,7 @@ export function statusText(state: TalkifState): string {
   if (state.offline) return 'Talkif: offline, retrying…'
   if (state.registered.length === 0) return 'Talkif: connecting…'
   const named = [...new Set(state.registered.filter((n): n is string => n !== undefined))]
-  const head = state.away ? 'Talkif: on, away' : 'Talkif: on'
+  const head = ['Talkif: on', state.away ? 'away' : '', state.lead ? 'lead' : ''].filter(Boolean).join(', ')
   return named.length ? `${head} · ${named.join(', ')}` : head
 }
 
@@ -367,7 +369,8 @@ export function cmLines(state: TalkifState): string {
   const call = state.flowName ? `Call "${state.flowName}" in the Talkif app.` : 'Call your Talkif agent in the Talkif app.'
   const head = state.onCall ? 'On a call.' : 'On.'
   const away = state.away ? ['You are set as away: a waiting session rings you. /talkif back when you are at the terminal.'] : []
-  return [`${head} This session can be reached through ${accountsText(state.registered)}.`, call, ...away, MORE].join('\n')
+  const lead = state.lead ? ['This session is your lead: it answers for all of your sessions. /talkif lead off to stop.'] : []
+  return [`${head} This session can be reached through ${accountsText(state.registered)}.`, call, ...away, ...lead, MORE].join('\n')
 }
 
 /** /talkif help: the common commands first; two columns when the terminal is wide enough, else stacked. */
@@ -378,6 +381,7 @@ const HELP_ROWS: ReadonlyArray<readonly [string, string]> = [
   ['/talkif default on | off', 'how new sessions start'],
   ['/talkif away [30m | 2h]', "you're out: waiting sessions ring you"],
   ['/talkif back', "you're at the terminal again"],
+  ['/talkif lead | lead off', 'this session answers for all of yours'],
   ['/talkif setup', "check the connection, show what's missing"],
   ['/talkif traffic', 'what went back and forth (debug option)'],
   ['/talkif share private | ask | work', 'what members may do with this session'],
