@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.31.2 — 2026-11-14
+
+- **A lead session.** `/talkif lead` makes this session your lead: it answers for all of your sessions. On a call, what you ask without naming a session ("what's waiting on me?", "how is everything going?") goes to it instead of being offered to every session. `/talkif lead off` ends it; so does another session becoming the lead, or this one going offline. You can also say it on a call ("make the deploy one the lead"). One lead per person.
+- The lead learns it with its next message (never in the system prompt): answer from what the other sessions say they work on, hand work on with SendMessage, and never claim another session's state without its own word for it. The status line shows `Talkif: on, lead`, and the session list marks the lead for every other session.
+- With an API key, a lead needs an account where one person takes calls, as away mode does. Needs the matching Talkif update; with an older one, `/talkif lead` says it is not available and nothing else changes. Run `/talkif publish` after updating so your flow gets the new instructions.
+
 ## 0.31.1 — 2026-11-14
 
 - **The API key comes only from the Talkif API key option.** The developer file `~/.config/talkif/dev.env` (and its extra accounts) is no longer read. If you used it, paste the key in `/plugin` → Installed → talkif → Configure options.

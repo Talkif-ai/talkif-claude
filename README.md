@@ -125,6 +125,16 @@ When Talkif refuses the key (Connectors off, a missing scope, an IP allowlist), 
 
 **Tell all sessions at once.** On a call, say something to all of them ("tell all my sessions I'm out, call me if you need me"). The agent sends it once to every one of your own sessions: no session claims it, none starts working on it; each one has it beside your next message.
 
+## The lead session
+
+One of your sessions can answer for all of them: your **lead**. On a call, what you ask without naming a session ("what's waiting on me?", "how is everything going?") goes to the lead instead of being offered to every session. A session you name, describe or are already talking with still gets it directly.
+
+- `/talkif lead`: this session becomes your lead (it replaces the one before).
+- `/talkif lead off`: this session is no longer your lead.
+- On a call: "make the deploy one the lead" or "no lead any more".
+
+There is one lead per person. It ends when another session becomes the lead or when the lead goes offline. The lead answers from what your other sessions say they work on and hands work on to the session it belongs to; it learns it is the lead beside your next message, never in the system prompt. Every other session sees it marked in the list of your sessions, and the status line of the lead shows `Talkif: on, lead`.
+
 ## Away mode
 
 One switch, kept by Talkif, that every one of your sessions in that Talkif account knows: on this computer and on your others. (It is kept per person; sessions of yours in another Talkif account learn it when they connect again.)
@@ -179,7 +189,7 @@ A task can be handed on from session to session (and to connected bots such as a
 - **Only proven callers count.** A call reaches sessions only when it is started from the Talkif app or dashboard while signed in, when a session places it to you, or when you confirm on your signed-in Talkif app that a call from your phone number is you. Any other call from a phone number, an embed or an API key does not.
 - **Call text is treated as data.** Transcripts, call summaries, notes to all sessions and the away note reach the session marked as text from a call, not as instructions.
 - **No permission by phone.** A call can never allow a tool: a permission ring only tells you a session waits. A turn a call started never rings by itself, and an unanswered call pauses that session's rings for 15 minutes.
-- **Away mode is per person.** With an API key, `/talkif away` and notes to all sessions work only in an account where one person takes calls: a key can be shared, and its sessions would be someone else's.
+- **Away mode and the lead are per person.** With an API key, `/talkif away`, `/talkif lead` and notes to all sessions work only in an account where one person takes calls: a key can be shared, and its sessions would be someone else's.
 
 ## Who can reach what
 
@@ -214,6 +224,7 @@ The plugin reads the conversation only to write what it sends: the recap, its an
 - **Rings**: for `call_me`, its questions and background line, and the person to ring when you name one. For an automatic ring (away mode, ring options): the session's name and what it waits for in plain words (the open questions, what a waiting permission prompt would do, or a one-line summary of a finished task), never the command itself. When a task from a call ends after you hung up: its result, or what blocks it.
 - **Between sessions**: the text of a SendMessage to a Talkif session, and each task move (questions, answers, submissions with their evidence, reviews, declines).
 - **Away mode**: away or back, and for how long.
+- **The lead**: that this session becomes your lead, or no longer is (`/talkif lead`, `/talkif lead off`).
 - **/talkif publish** (only when you run it): writes the call prompt into your flow's Connectors node and publishes the flow.
 
 It also reads from Talkif: your published flows (to find the one with a Connectors node), whether Connectors are on, the people a call can ring, your other reachable sessions, and, with the Calls (read) scope, the transcript of a `call_me` call to a teammate.
@@ -237,7 +248,7 @@ The plugin starts a turn of the session (a prompt it submits) only for something
 
 Each prompt says where it comes from. Transcripts, notes, answers and other sessions' text come fenced and marked as data from Talkif, not instructions; a task's own words come marked as speech-to-text from a call, or as a hand-over from another session. Each carries the rules for its turn: tasks from a call run read-only (unless **Tasks from calls** is `session`), nothing in them approves an action, and no secret is to be said.
 
-Beside the messages you type, it adds context only when something changed: that you are away or back (and your away note), notes you sent from a call to all sessions, summaries of your recent calls, and the list of your other reachable sessions. Your own text is never changed. The system prompt gets one fixed section that never changes: when to use `call_me`, how Talkif sessions appear in ListAgents and SendMessage, and how to write a task.
+Beside the messages you type, it adds context only when something changed: that you are away or back (and your away note), that this session became your lead or no longer is, notes you sent from a call to all sessions, summaries of your recent calls, and the list of your other reachable sessions. Your own text is never changed. The system prompt gets one fixed section that never changes: when to use `call_me`, how Talkif sessions appear in ListAgents and SendMessage, and how to write a task.
 
 ### Tools and commands it adds
 
@@ -281,6 +292,7 @@ Nothing the plugin does can allow a tool call or change a permission rule, a per
 | `/talkif traffic` | see what went back and forth (needs the `debug` option) |
 | `/talkif ring` | list who call_me may ring; `/talkif ring <number or name>` picks whose phone rings (needed when several people share the Talkif account) |
 | `/talkif away [30m · 2h]` · `/talkif back` | you are out (waiting sessions ring you) / at the terminal again; every session of yours knows |
+| `/talkif lead` · `/talkif lead off` | this session answers for all of yours (your lead) / no longer |
 
 Advanced:
 
