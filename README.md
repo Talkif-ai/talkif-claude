@@ -77,7 +77,28 @@ Next step: An owner or admin of the Talkif account turns Connectors on in the da
 Run /talkif setup again after each step.
 ```
 
-`/talkif setup` only reads. It never prints your key.
+`/talkif setup` never prints your key. Once Talkif's API has the setup check (it needs the matching Talkif update; until then the line is left out), it also says whether your phone can ring:
+
+```
+[missing] Phone: call_me rings Ada, who has no iPhone with the Talkif app signed in
+
+Next step: Install Talkif from the App Store on your iPhone and sign in with the same Talkif account. Until then call_me reaches only a Talkif app or dashboard that is open at that moment.
+```
+
+### Or let Claude set it up
+
+After step 2, tell Claude **"set up Talkif"**. It calls the plugin's `talkif_setup` tool, which runs the same checks as `/talkif setup` and adds what only this session knows:
+
+- **Permissions.** Whether Claude Code would stop `call_me` or the task tools at a permission prompt. While you are away nobody answers that prompt, so the session could not ring you. It names the rules to add, for example:
+
+  ```json
+  { "permissions": { "allow": ["mcp__talkif__call_me"] } }
+  ```
+
+  in `~/.claude/settings.json` (or `/permissions` → Allow). Run it again afterwards: it reads Claude Code's own decision, so it shows whether the rule took. Allowing `call_me` lets the session ring without asking first, and each ring is a billed call: to your phone, or to the person you picked with `/talkif ring`. The plugin needs no hook settings of yours.
+- **Options.** Each plugin option with what to keep or change and one reason: `callTasks`, `callback`, `parallel`, `sharing`, and optionally `folders` (this session's folder) and `flowId` (the voice agent your calls use now).
+
+The tool only reads: it does not reconnect, retry or change a setting. Claude tells you each step; pasting the key and changing options stay yours.
 
 ## Is it on?
 
@@ -209,7 +230,7 @@ The key comes only from the plugin's **Talkif API key** option, which Claude Cod
 ### Hosts it contacts
 
 - **The Talkif API**, `https://api.talkif.ai` (or the address in **API URL (advanced)** when you set one). Every request carries your key and the header `User-Agent: talkif-claude/<version>`. No other host.
-- **The Talkif MCP server**, `https://api.talkif.ai/api/v1/mcp`, for the Talkif tools. Claude Code connects to it from `.mcp.json` with your key; the plugin's code does not.
+- **The Talkif MCP server**, `https://api.talkif.ai/api/v1/mcp`, for the Talkif tools. Claude Code connects to it from `.mcp.json` with your key. The plugin's code sends it one request of its own, Talkif's setup check (a read), when you run `/talkif setup` or Claude runs `talkif_setup`.
 - Short summaries (see below) are written by Claude through Claude Code's own model access, not through any other host.
 
 ### What it sends to Talkif
@@ -227,7 +248,7 @@ The plugin reads the conversation only to write what it sends: the recap, its an
 - **The lead**: that this session becomes your lead, or no longer is (`/talkif lead`, `/talkif lead off`).
 - **/talkif publish** (only when you run it): writes the call prompt into your flow's Connectors node and publishes the flow.
 
-It also reads from Talkif: your published flows (to find the one with a Connectors node), whether Connectors are on, the people a call can ring, your other reachable sessions, and, with the Calls (read) scope, the transcript of a `call_me` call to a teammate.
+It also reads from Talkif: your published flows (to find the one with a Connectors node), whether Connectors are on, the people a call can ring, your other reachable sessions, Talkif's setup check (whose phone a ring reaches and whether it has the Talkif app signed in, and whether the account is an organization), and, with the Calls (read) scope, the transcript of a `call_me` call to a teammate.
 
 ### Programs it starts
 
@@ -253,6 +274,7 @@ Beside the messages you type, it adds context only when something changed: that 
 ### Tools and commands it adds
 
 - `call_me`, and the task tools `talkif_question`, `talkif_submit`, `talkif_decline`, `talkif_answer` and `talkif_review` (each sends one thing to Talkif, see above);
+- `talkif_setup`, which only reads: the checks of `/talkif setup`, Claude Code's own permission decision for `call_me` and the task tools (asked without running anything), and the plugin options;
 - the `/talkif` command;
 - the Talkif MCP server's tools, through `.mcp.json`;
 - the **Talkif traffic** pane (`/talkif traffic`, debug option only).
@@ -266,7 +288,7 @@ Beside the messages you type, it adds context only when something changed: that 
 | session start / end | joins Talkif (when the session's folder is allowed by **Folders**), adds the tools and `/talkif`, restores a waiting `call_me` call / leaves Talkif |
 | compaction | sends the session list and the away state again after it |
 | turn start / end | knows which turn is a task from a call (read-only), sends that task's result to its call, rings later for an open question or a long task only as the ring options say, refreshes the recap |
-| every tool call | during a task from a call with **Tasks from calls** `read-only`: refuses tools that change anything (only reading tools and a short list of read-only commands pass) and any read of credential files. At any time: refuses the Talkif MCP server's own session tools (`talkif_send`, `talkif_inbox`, …), which act as a separate cloud agent. Every other call goes on unchanged |
+| every tool call | during a task from a call with **Tasks from calls** `read-only`: refuses tools that change anything (only reading tools and a short list of read-only commands pass) and any read of credential files. At any time: refuses the Talkif MCP server's own session tools (`talkif_send`, `talkif_inbox`, …), which act as a separate cloud agent, and its `talkif_setup`, which the plugin's own `talkif_setup` runs for it. Every other call goes on unchanged |
 | tool descriptions | marks those session tools as not for this session |
 | ListAgents | adds your reachable Talkif sessions to its answer |
 | SendMessage | only when Claude Code found no agent of that name and the name is one of your Talkif sessions: delivers the message through Talkif and answers with whether it was delivered, in place of the "no such agent" error |
@@ -274,6 +296,7 @@ Beside the messages you type, it adds context only when something changed: that 
 | permission request | **never answers it**: every request goes on to Claude Code exactly as it came, and you allow or refuse it at your computer. It only notes that the session waits at a permission dialog: in your own work, a ring (when you are away or a ring option says so) tells you that it waits and what for; in a task from a call, that call hears which tool waits |
 | notifications | when Claude Code says a permission dialog is open with nobody typing, the wait for that ring starts |
 | `/talkif` | answers the command |
+| `talkif_setup` | answers the tool with the setup report; it starts nothing, reconnects nothing and changes no setting |
 | traffic pane | draws the debug pane |
 
 Nothing the plugin does can allow a tool call or change a permission rule, a permission mode or Remote Control.
@@ -331,6 +354,8 @@ Change them in `/config` → talkif. The API key is in `/plugin` → Installed �
 | `missing a permission`, although the key has **Full access** | Full access does not include Connectors. In Developer → Credentials, open the key, tick **Connectors** under Full access and save. The key itself stays the same. |
 | `this computer's IP address is not on the API key's allowlist` | Add your current IP address to the key, or remove the restriction. The plugin checks again every 30 seconds. |
 | `your Talkif account has no published flow with a Connectors node` | Add a Connectors node to an agent in the flow builder and publish it, or set `flowId`. |
+| `call_me` says it is ringing, but no phone rings | Run `/talkif setup` and look at the Phone line: call_me rings the Talkif app on an iPhone signed in to the same account. Without one, only a Talkif app or dashboard that is open at that moment rings. |
+| A session never rings you while you are away | Ask Claude to run `talkif_setup`: if `call_me` stops at a permission prompt, it names the rule to add. |
 | `the API key was refused (expired or revoked?)` | Create a new key and paste it in Configure options. |
 | `/talkif` is an unknown command in a session | The session's folder is not in the `folders` option. Add it, or empty the option. |
 | Your call does not reach the session | Call from the Talkif app while signed in, and check `/talkif` says `On`. |

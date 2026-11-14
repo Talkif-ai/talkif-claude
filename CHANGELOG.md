@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.31.3 — 2026-11-15
+
+- **Tell Claude "set up Talkif".** A new tool, `talkif_setup`, runs the setup checks for Claude and adds what only the session knows: whether Claude Code would stop `call_me` or the task tools at a permission prompt, with the rule to add (run it again to see whether the rule took; allowing `call_me` means each ring, a billed call, goes out without asking first), and each plugin option with what to keep or change and why. It only reads: it does not reconnect, retry or change a setting.
+- **`/talkif setup` checks your phone.** It says whose phone `call_me` rings and whether that person has an iPhone with the Talkif app signed in. Needs the matching Talkif update; until then the line is left out. If Talkif cannot answer, the line says so instead of disappearing.
+
 ## 0.31.2 — 2026-11-14
 
 - **A lead session.** `/talkif lead` makes this session your lead: it answers for all of your sessions. On a call, what you ask without naming a session ("what's waiting on me?", "how is everything going?") goes to it instead of being offered to every session. `/talkif lead off` ends it; so does another session becoming the lead, or this one going offline. You can also say it on a call ("make the deploy one the lead"). One lead per person.
