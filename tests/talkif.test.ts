@@ -105,43 +105,18 @@ test('the User-Agent version is a plain semver', async () => {
 
 import { DEFAULT_API_URL, NO_KEY_PROBLEM, folderAllowed, hasConnectorsNode, parseFolders, pickConnectorsFlow, publishedFlows, refusalReason, resolveCredentials } from '../hooks/config'
 
-test('setup: a key in the options wins; the URL is the apiUrl option or Talkif', async () => {
-  const devFile = 'TALKIF_API_URL=https://api.example.test\nTALKIF_API_KEY=dev\nTALKIF_BRIDGE_KEY=devbridge'
-  const plain = resolveCredentials({ apiKey: ' k1 ', apiUrl: '' }, devFile)
-  expect(plain).toEqual({ ok: true, credentials: { source: 'options', url: DEFAULT_API_URL, apiKey: 'k1', bridges: [{ name: 'personal', key: 'k1' }] } })
+test('setup: the key comes from the apiKey option only; the URL is the apiUrl option or Talkif', async () => {
+  const plain = resolveCredentials({ apiKey: ' k1 ', apiUrl: '' })
+  expect(plain).toEqual({ ok: true, credentials: { url: DEFAULT_API_URL, apiKey: 'k1', bridges: [{ name: 'personal', key: 'k1' }] } })
   expect(DEFAULT_API_URL).toBe('https://api.talkif.ai')
-  const custom = resolveCredentials({ apiKey: 'k1', apiUrl: ' https://api.example.test/ ' }, undefined)
+  const custom = resolveCredentials({ apiKey: 'k1', apiUrl: ' https://api.example.test/ ' })
   expect(custom.ok && custom.credentials.url).toBe('https://api.example.test')
   // Not an http(s) address: a setup problem, never a silent fallback.
-  const bad = resolveCredentials({ apiKey: 'k1', apiUrl: 'api.example.test' }, undefined)
+  const bad = resolveCredentials({ apiKey: 'k1', apiUrl: 'api.example.test' })
   expect(bad.ok).toBe(false)
   if (!bad.ok) expect(bad.problem.reason).toMatch(/not an http/)
-})
-
-test('setup: no key falls back to the developer file, with every bridge account', async () => {
-  const devFile = [
-    '# dev keys',
-    'TALKIF_API_URL=https://api.example.test/',
-    'TALKIF_API_KEY=api',
-    'TALKIF_ORG_BRIDGE_KEY=org',
-    'TALKIF_BRIDGE_KEY=mine',
-    'TALKIF_EMPTY_BRIDGE_KEY=',
-    'OTHER=x',
-  ].join('\n')
-  const r = resolveCredentials({ apiKey: '', apiUrl: '' }, devFile)
-  expect(r).toEqual({
-    ok: true,
-    credentials: { source: 'dev-file', url: 'https://api.example.test', apiKey: 'api', bridges: [{ name: 'personal', key: 'mine' }, { name: 'org', key: 'org' }] },
-  })
-  // The apiUrl option beats the file's URL; a file without one uses Talkif.
-  const override = resolveCredentials({ apiKey: '', apiUrl: 'https://other.example.test' }, devFile)
-  expect(override.ok && override.credentials.url).toBe('https://other.example.test')
-  const noUrl = resolveCredentials({ apiKey: '', apiUrl: '' }, 'TALKIF_API_KEY=api\nTALKIF_BRIDGE_KEY=b')
-  expect(noUrl.ok && noUrl.credentials.url).toBe(DEFAULT_API_URL)
-  expect(resolveCredentials({ apiKey: '  ', apiUrl: '' }, undefined)).toEqual({ ok: false, problem: NO_KEY_PROBLEM })
-  const broken = resolveCredentials({ apiKey: '', apiUrl: '' }, 'TALKIF_BRIDGE_KEY=x', '~/dev-file')
-  expect(broken.ok).toBe(false)
-  if (!broken.ok) expect(broken.problem.reason).toBe('~/dev-file has no TALKIF_API_KEY')
+  // No key in the option: nothing else on the machine is read for one.
+  expect(resolveCredentials({ apiKey: '  ', apiUrl: '' })).toEqual({ ok: false, problem: NO_KEY_PROBLEM })
 })
 
 test('flow: the first published flow with a Connectors node is picked', async () => {
@@ -426,13 +401,13 @@ function fakeTalkif(on: On) {
     if (world.offline) throw new Error('getaddrinfo ENOTFOUND api.talkif.ai')
     const path = new URL(e.url).pathname.replace(/^\/api\/v1/, '')
     const method = e.init?.method ?? 'GET'
-    world.requests.push({ method, path, body: e.init?.body ? JSON.parse(e.init.body) : undefined })
+    world.requests.push({ method, path, body: typeof e.init?.body === 'string' ? JSON.parse(e.init.body) : undefined })
     const extra = world.extra?.(method, path, typeof e.init?.body === 'string' ? JSON.parse(e.init.body) : undefined)
     if (extra !== undefined) return extra
     if (path === '/session-bridge' && method === 'POST') {
       if (!world.consent) return refused
       world.registers += 1
-      world.registerBodies.push(JSON.parse(e.init?.body ?? '{}'))
+      world.registerBodies.push(typeof e.init?.body === 'string' ? JSON.parse(e.init.body) : {})
       return json(200, { sessionId: 'bridge-1', accountName: 'Talkif Phone', ...(world.sendsEnds ? { callEnds: true } : {}) })
     }
     if (path === '/session-bridge/bridge-1/next') {
@@ -466,9 +441,9 @@ function fakeTalkif(on: On) {
     if (path === '/flows/flow-1') return json(200, { id: 'flow-1', name: 'Interviewer', status: 'PUBLISHED', definition: FLOW_DEF })
     return json(404, { code: 'not_found' })
   })
-  on('process.run', ($, e) => ({ value: { exitCode: e.argv[0] === 'printenv' ? 0 : 1, stdout: e.argv[0] === 'printenv' ? '/home/test\n' : '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
-  on('fs.exists', () => ({ value: false }))
-  on('fs.write', () => ({ value: undefined }))
+  // Not a git repository; the home folder from the environment.
+  on('process.run', () => ({ value: { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  mock.env(on, { HOME: '/home/test' })
   on('session.id', () => ({ value: 'session-test' }))
   on('session.messages', () => ({ value: [] }))
   on('ui.log', (_$, e) => {
@@ -1129,23 +1104,34 @@ test('a presence turn from a call and an announcement reach the next message as 
   expect(world.requests.some(r => r.path.endsWith('/reply'))).toBe(false)
 })
 
+/**
+ * The engine's end of a tool call, held open the way a permission dialog holds it:
+ * `release()` lets every held call run.
+ */
+function heldCalls(on: On) {
+  const waiting: (() => void)[] = []
+  on('tool.call', () => new Promise<{ result: string }>(resolve => waiting.push(() => resolve({ result: 'ran' }))))
+  return { release: () => { for (const run of waiting.splice(0)) run() } }
+}
+
 test('a waiting permission prompt rings to tell, in plain words; nothing can be allowed on the call', { options: { apiKey: 'tif_test_FAKE', ringAfter: '5' } }, async ($, on) => {
   const clock = mock.clock(on)
   mock.store(on)
   const world = fakeTalkif(on)
   fakeAway(on, world)
   world.consent = true
-  on('tool.check', () => ({ decision: 'ask' }))
+  const held = heldCalls(on)
   // No settings hook beneath: the engine's own answer is none.
   on('classic.PermissionRequest', () => ({}))
   on('classic.Notification', () => ({}))
   on('prompt.submit', () => ({ drop: 'captured by the test' }))
   await startSession($)
   await clock.settle()
-  await $.tool.check({ tool: 'Bash', input: { command: 'rm -rf build' }, tool_use_id: 'tu-1', approver: 'person' })
-  // The plugin never answers a permission request.
+  const running = $.tool.call({ tool: 'Bash', command: 'rm -rf build', tool_use_id: 'tu-1' })
+  await clock.settle()
+  // The plugin never answers a permission request: it hands it on as it came.
   expect(await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'rm -rf build' } })).toEqual({})
-  // An ask alone (one the auto-mode classifier settles) waits for nobody.
+  // A dialog alone (answered at once) waits for nobody.
   await clock.advance(6 * 60_000)
   expect(world.requests.some(r => r.path === '/session-bridge/calls')).toBe(false)
   // Claude Code says the dialog is open and nobody typed: now it waits for the developer.
@@ -1159,6 +1145,8 @@ test('a waiting permission prompt rings to tell, in plain words; nothing can be 
   expect(body).not.toMatch(/rm -rf/)
   expect(rings[0]?.body).not.toHaveProperty('approvalId')
   expect(world.requests.some(r => r.path.includes('/approvals'))).toBe(false)
+  held.release()
+  await running
 })
 
 test('a permission prompt answered at the terminal never rings', { options: { apiKey: 'tif_test_FAKE', ringAfter: '5' } }, async ($, on) => {
@@ -1167,15 +1155,18 @@ test('a permission prompt answered at the terminal never rings', { options: { ap
   const world = fakeTalkif(on)
   fakeAway(on, world)
   world.consent = true
-  let allowed = false
-  on('tool.check', () => ({ decision: allowed ? 'allow' : 'ask' }))
-  on('tool.call', () => ({ result: 'ran' }))
+  const held = heldCalls(on)
+  on('classic.PermissionRequest', () => ({}))
+  on('classic.Notification', () => ({}))
   await startSession($)
   await clock.settle()
-  await $.tool.check({ tool: 'Bash', input: { command: 'git push' }, tool_use_id: 'tu-2', approver: 'person' })
+  const running = $.tool.call({ tool: 'Bash', command: 'git push', tool_use_id: 'tu-2' })
+  await clock.settle()
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'git push' } })
+  await $.classic.Notification({ message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' })
   // The developer allowed it at the terminal: the call ran.
-  allowed = true
-  await $.tool.call({ tool: 'Bash', command: 'git push', tool_use_id: 'tu-2' })
+  held.release()
+  await running
   await clock.advance(6 * 60_000)
   expect(world.requests.some(r => r.path === '/session-bridge/calls')).toBe(false)
 })
@@ -1236,7 +1227,7 @@ test('away: typing first means no ring; a question dialog rings like a question;
   on('model.classify', () => ({ value: 'waits_for_the_developer_to_answer_or_decide' }))
   on('prompt.submit', () => ({ drop: 'captured by the test' }))
   on('turn.complete', (_$, e) => ({ text: e.answer }))
-  on('tool.check', () => ({ decision: 'ask' }))
+  const held = heldCalls(on)
   await startSession($)
   await clock.settle()
   // A pick for call_me: Ada's phone.
@@ -1250,8 +1241,10 @@ test('away: typing first means no ring; a question dialog rings like a question;
   await clock.advance(2 * 60_000)
   expect(rings().length).toBe(0)
   // A question in a dialog waits for the developer at once.
-  await $.tool.check({ tool: 'AskUserQuestion', input: { questions: [{ question: 'Which region first?' }] }, tool_use_id: 'tu-q', approver: 'person' })
+  const asking = $.tool.call({ tool: 'AskUserQuestion', questions: [{ question: 'Which region first?', header: 'Region', options: [{ label: 'EU', description: 'Europe first' }, { label: 'US', description: 'America first' }], multiSelect: false }], tool_use_id: 'tu-q' })
   await clock.advance(60_000)
   expect(rings().length).toBe(1)
   expect(rings()[0]?.body).not.toHaveProperty('ringUserId')
+  held.release()
+  await asking
 })

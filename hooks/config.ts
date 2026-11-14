@@ -1,31 +1,21 @@
 // Setup: where the plugin's key, backend URL, flow and folders come from.
 // Pure functions only, so they are tested without the engine.
 //
-// Users set the plugin options (apiKey in secure storage, apiUrl, flowId,
-// folders). The developer path stays: with no apiKey, ~/.config/talkif/dev.env
-// is read (TALKIF_API_KEY, TALKIF_API_URL, TALKIF_BRIDGE_KEY and
-// TALKIF_<NAME>_BRIDGE_KEY for more accounts).
+// Users set the plugin options: apiKey (kept in the system keychain by Claude
+// Code), apiUrl, flowId, folders. The key comes from the apiKey option only.
 
 /** The Talkif API: the backend unless the apiUrl option names another. */
 export const DEFAULT_API_URL = 'https://api.talkif.ai'
-
-export const DEV_ENV_FILE = '.config/talkif/dev.env'
-// Legacy dev file name, still read when dev.env is missing.
-export const LEGACY_DEV_ENV_FILE = `.config/talkif/${'stag'}ing.env`
-/** The developer files, in the order they are tried (paths under the home folder). */
-export const DEV_ENV_FILES = [DEV_ENV_FILE, LEGACY_DEV_ENV_FILE] as const
 
 /** One account the session joins the bridge in. */
 export type BridgeKey = { name: string; key: string }
 
 export type Credentials = {
-  /** options: the plugin options; dev-file: the developer file (~/.config/talkif/dev.env). */
-  source: 'options' | 'dev-file'
   /** The backend's base URL, no trailing slash. */
   url: string
-  /** The key for calls and flows. */
+  /** The key for calls and flows (the apiKey option). */
   apiKey: string
-  /** The keys the session joins the bridge with (the first is "personal" when present). */
+  /** The keys the session joins the bridge with: the apiKey option, as "personal". */
   bridges: BridgeKey[]
 }
 
@@ -86,57 +76,13 @@ export const badUrlProblem = (raw: string): Problem => ({
     : `empty the API URL option in /plugin → talkif → Configure options to use Talkif (${DEFAULT_API_URL})`,
 })
 
-/** KEY=value lines; blank lines, comments and lines without "=" are skipped. */
-export function parseEnvFile(text: string): Record<string, string> {
-  const vars: Record<string, string> = {}
-  for (const raw of text.split('\n')) {
-    const line = raw.trim()
-    if (!line || line.startsWith('#')) continue
-    const eq = line.indexOf('=')
-    if (eq <= 0) continue
-    vars[line.slice(0, eq).trim()] = line.slice(eq + 1).trim()
-  }
-  return vars
-}
-
-// TALKIF_BRIDGE_KEY → "personal"; TALKIF_<NAME>_BRIDGE_KEY → "<name>".
-const BRIDGE_KEY_NAME = /^TALKIF_(?:([A-Z0-9]+)_)?BRIDGE_KEY$/
-
-/**
- * The key from the options wins and also serves the bridge. Without one, the
- * developer file (when there is one; `devFileName` names it in messages).
- * The backend: the apiUrl option, else (dev file only) its TALKIF_API_URL, else
- * DEFAULT_API_URL.
- */
-export function resolveCredentials(options: SetupOptions, devFile: string | undefined, devFileName = `~/${DEV_ENV_FILE}`): Resolved {
-  const optionUrl = normalizeApiUrl(options.apiUrl)
-  if (optionUrl === undefined) return { ok: false, problem: badUrlProblem(options.apiUrl) }
-  const fromOption = options.apiUrl.trim() !== ''
+/** The key and the backend, from the plugin options only. */
+export function resolveCredentials(options: SetupOptions): Resolved {
+  const url = normalizeApiUrl(options.apiUrl)
+  if (url === undefined) return { ok: false, problem: badUrlProblem(options.apiUrl) }
   const key = options.apiKey.trim()
-  if (key) {
-    return { ok: true, credentials: { source: 'options', url: optionUrl, apiKey: key, bridges: [{ name: 'personal', key }] } }
-  }
-  if (devFile === undefined) return { ok: false, problem: NO_KEY_PROBLEM }
-  const vars = parseEnvFile(devFile)
-  const apiKey = vars.TALKIF_API_KEY ?? ''
-  if (!apiKey) return { ok: false, problem: { reason: `${devFileName} has no TALKIF_API_KEY`, next: `add it there, or ${PASTE_KEY}` } }
-  let url = optionUrl
-  if (!fromOption && vars.TALKIF_API_URL) {
-    const fileUrl = normalizeApiUrl(vars.TALKIF_API_URL)
-    if (fileUrl === undefined) {
-      return { ok: false, problem: { reason: `TALKIF_API_URL in ${devFileName} is not an http:// or https:// address`, next: 'fix it or remove the line' } }
-    }
-    url = fileUrl
-  }
-  const bridges: BridgeKey[] = []
-  for (const [name, value] of Object.entries(vars)) {
-    const m = BRIDGE_KEY_NAME.exec(name)
-    if (!m || !value) continue
-    bridges.push({ name: (m[1] ?? 'personal').toLowerCase(), key: value })
-  }
-  // The personal account first: rings go through it.
-  bridges.sort((a, b) => Number(b.name === 'personal') - Number(a.name === 'personal'))
-  return { ok: true, credentials: { source: 'dev-file', url, apiKey, bridges } }
+  if (!key) return { ok: false, problem: NO_KEY_PROBLEM }
+  return { ok: true, credentials: { url, apiKey: key, bridges: [{ name: 'personal', key }] } }
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)

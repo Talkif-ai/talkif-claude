@@ -187,6 +187,86 @@ A task can be handed on from session to session (and to connected bots such as a
 - **Organization:** every owner, admin and member of the organization on a proven call reaches all of its connectors, your coding sessions included: they can ask questions and give tasks. Each question or task names who asked by their Talkif profile name ("Question from Ada on a call", "Task from Ada on a call"), and the session's traffic shows it too. A task from someone else never rings you back. Sessions running the older call-me plugin before 0.24.0 stay reachable by you alone.
 - **Tasks from a call stay read-only by default**, whoever gives them (see `callTasks`).
 - **Callers who are not proven** (phone numbers, embeds, API keys) reach nothing, except connectors you made public, and those only for look-ups.
+
+## What this plugin does on your computer
+
+Everything the plugin's own code does, in one place. Its code is the files in `hooks/`: it downloads and runs no other code, builds no code from text, and reads no file on your computer.
+
+### Your API key
+
+The key comes only from the plugin's **Talkif API key** option, which Claude Code keeps in your system keychain. The plugin reads no key or token from anywhere else: not from environment variables, files, or other tools' settings. It sends the key only to the Talkif API, as the `Authorization` header.
+
+### Hosts it contacts
+
+- **The Talkif API**, `https://api.talkif.ai` (or the address in **API URL (advanced)** when you set one). Every request carries your key and the header `User-Agent: talkif-claude/<version>`. No other host.
+- **The Talkif MCP server**, `https://api.talkif.ai/api/v1/mcp`, for the Talkif tools. Claude Code connects to it from `.mcp.json` with your key; the plugin's code does not.
+- Short summaries (see below) are written by Claude through Claude Code's own model access, not through any other host.
+
+### What it sends to Talkif
+
+Text bound for Talkif's session bridge goes through a redaction step first: anything that looks like a key, token or password becomes `[redacted]`.
+
+The plugin reads the conversation only to write what it sends: the recap, its answers on a call, the score for an offered request, and the plain words of a ring. Claude writes these from the conversation through Claude Code; what leaves your computer is only what is listed here.
+
+- **To join your voice agent**: a short name for the session (a name of its work, else `repo (branch)`, else the folder's name), Claude Code's id for the session, the repository's GitHub name and folder name as topics, the sharing level, and a recap.
+- **The recap**: up to four short lines on what the session is working on and where it stands, written by Claude from the session's last 30 messages (each cut to 400 characters). Sent when the session joins, after a turn at most every 15 minutes, when a call starts and before `call_me` rings.
+- **On a call**: the session's answers to questions put to it, a short "I have started on it", and at the end of a task from a call the turn's final answer (its last 1,400 characters). When such a task waits at a permission prompt, the call hears which tool waits and, for a shell command, its text. When your voice agent offers a request to several sessions, only a score of how well it fits this session goes back.
+- **Rings**: for `call_me`, its questions and background line, and the person to ring when you name one. For an automatic ring (away mode, ring options): the session's name and what it waits for in plain words (the open questions, what a waiting permission prompt would do, or a one-line summary of a finished task), never the command itself. When a task from a call ends after you hung up: its result, or what blocks it.
+- **Between sessions**: the text of a SendMessage to a Talkif session, and each task move (questions, answers, submissions with their evidence, reviews, declines).
+- **Away mode**: away or back, and for how long.
+- **/talkif publish** (only when you run it): writes the call prompt into your flow's Connectors node and publishes the flow.
+
+It also reads from Talkif: your published flows (to find the one with a Connectors node), whether Connectors are on, the people a call can ring, your other reachable sessions, and, with the Calls (read) scope, the transcript of a `call_me` call to a teammate.
+
+### Programs it starts
+
+Only `git`, in the session's folder, to name the session and its topics: `git rev-parse --show-toplevel`, `git branch --show-current` and `git remote get-url origin`. Nothing else. It reads one environment variable, `HOME`, to expand `~/` in the **Folders** option and to never name a session after your home folder.
+
+### Files it writes
+
+None. It keeps a few small values in Claude Code's own store for this plugin: the on/off switches, the flow picked and the person `/talkif ring` picked (per API address), a `call_me` call still waiting for its outcome (per session; removed when the call ends, or after a day), when a session last rang you automatically, and which plugin version last said the phone agent needs `/talkif publish`. With the **Debug traffic pane** option on, the traffic it shows is kept in the session's memory only.
+
+### What it puts in the prompts it submits
+
+The plugin starts a turn of the session (a prompt it submits) only for something from Talkif:
+
+- the outcome of a `call_me` call or an automatic ring: the questions, then the call's transcript, or that nobody answered, or that no outcome came within 30 minutes;
+- the transcript of a call the session took part in;
+- a task given on a call (the spoken instruction);
+- a task from another session, and its answers, reviews, cancellations and results; updates on a task this session handed over.
+
+Each prompt says where it comes from. Transcripts, notes, answers and other sessions' text come fenced and marked as data from Talkif, not instructions; a task's own words come marked as speech-to-text from a call, or as a hand-over from another session. Each carries the rules for its turn: tasks from a call run read-only (unless **Tasks from calls** is `session`), nothing in them approves an action, and no secret is to be said.
+
+Beside the messages you type, it adds context only when something changed: that you are away or back (and your away note), notes you sent from a call to all sessions, summaries of your recent calls, and the list of your other reachable sessions. Your own text is never changed. The system prompt gets one fixed section that never changes: when to use `call_me`, how Talkif sessions appear in ListAgents and SendMessage, and how to write a task.
+
+### Tools and commands it adds
+
+- `call_me`, and the task tools `talkif_question`, `talkif_submit`, `talkif_decline`, `talkif_answer` and `talkif_review` (each sends one thing to Talkif, see above);
+- the `/talkif` command;
+- the Talkif MCP server's tools, through `.mcp.json`;
+- the **Talkif traffic** pane (`/talkif traffic`, debug option only).
+
+### What each hook decides, and when
+
+| Hook | What it does |
+|---|---|
+| system prompt | adds the one fixed section above |
+| your message | adds the context above beside it; never blocks or changes it. Typing counts as an answer, so no ring follows for what you answered |
+| session start / end | joins Talkif (when the session's folder is allowed by **Folders**), adds the tools and `/talkif`, restores a waiting `call_me` call / leaves Talkif |
+| compaction | sends the session list and the away state again after it |
+| turn start / end | knows which turn is a task from a call (read-only), sends that task's result to its call, rings later for an open question or a long task only as the ring options say, refreshes the recap |
+| every tool call | during a task from a call with **Tasks from calls** `read-only`: refuses tools that change anything (only reading tools and a short list of read-only commands pass) and any read of credential files. At any time: refuses the Talkif MCP server's own session tools (`talkif_send`, `talkif_inbox`, …), which act as a separate cloud agent. Every other call goes on unchanged |
+| tool descriptions | marks those session tools as not for this session |
+| ListAgents | adds your reachable Talkif sessions to its answer |
+| SendMessage | only when Claude Code found no agent of that name and the name is one of your Talkif sessions: delivers the message through Talkif and answers with whether it was delivered, in place of the "no such agent" error |
+| starting a subagent | only during a read-only task from a call: refuses teammates, workflows and background subagents, and keeps the subagents it lets start read-only. Otherwise every spawn goes on unchanged; it never changes a subagent's permission mode |
+| permission request | **never answers it**: every request goes on to Claude Code exactly as it came, and you allow or refuse it at your computer. It only notes that the session waits at a permission dialog: in your own work, a ring (when you are away or a ring option says so) tells you that it waits and what for; in a task from a call, that call hears which tool waits |
+| notifications | when Claude Code says a permission dialog is open with nobody typing, the wait for that ring starts |
+| `/talkif` | answers the command |
+| traffic pane | draws the debug pane |
+
+Nothing the plugin does can allow a tool call or change a permission rule, a permission mode or Remote Control.
+
 ## Commands
 
 `/talkif help` shows this list.
@@ -229,30 +309,6 @@ Change them in `/config` → talkif. The API key is in `/plugin` → Installed �
 | `parallel` | off | queue more tasks from a call while one runs, instead of saying "still on the last task" |
 | `debug` | off | record this session's traffic for `/talkif traffic` |
 
-## Other connectors
-
-Besides Claude Code sessions, two small scripts can join your voice agent. They run on your machine with Node 22 or newer and take the key from the environment (a key with the Connectors scope):
-
-```
-export TALKIF_API_KEY=…
-```
-
-**Knowledge folder**: answers questions from a folder of `.md`, `.mdx` and `.txt` files.
-
-```
-node connectors/knowledge-folder.mjs ~/notes/product-docs --name "product docs"
-```
-
-Your organization's members can ask it too. Add `--audience public` to let any caller of your flows look things up in it (only for material you would publish).
-
-**Launcher**: answers questions about GitHub, CI, logs and deploys by running Claude Code in plan mode (read-only) with your own tools.
-
-```
-node connectors/launcher.mjs --cwd ~/work --name ops
-```
-
-It only answers questions, never takes tasks, and only you can reach it (it runs with your own credentials). Both scripts take `--topics a,b,c` (what they are about).
-
 ## Troubleshooting
 
 | You see | Fix |
@@ -274,18 +330,9 @@ After a plugin update, run `/reload-plugins` to use it without restarting.
 
 ## For Talkif developers
 
-To point the plugin at another Talkif API, set **API URL (advanced)**. Or leave the `apiKey` option empty and put the URL and keys in `~/.config/talkif/dev.env` (mode 600); this also lets one machine join several accounts at once:
+To point the plugin at another Talkif API, set **API URL (advanced)**; the key always comes from the **Talkif API key** option.
 
-```
-TALKIF_API_URL=https://…  # optional: empty means https://api.talkif.ai
-TALKIF_API_KEY=…         # scopes: flows
-TALKIF_BRIDGE_KEY=…      # scope: Connectors (your personal account)
-TALKIF_ORG_BRIDGE_KEY=…  # optional: Connectors in another account (any TALKIF_<NAME>_BRIDGE_KEY)
-```
-
-The **API URL (advanced)** option, when set, beats the file's `TALKIF_API_URL`; `flowId` and `folders` apply as usual. The connector scripts read the same file as a fallback (`--env-file PATH` picks another) and also take `--url URL` (or `TALKIF_API_URL`) and `--key-env VAR`. `node connectors/agent.mjs` is an experimental local helper that holds a WebSocket per session instead of long polling; it is not needed.
-
-Checks before a release: `claude plugin validate . --strict`, `claude plugin test .` and `tsc -p . --noEmit`.
+Checks before a release: `claude plugin validate --strict .` and `claude plugin test .`.
 
 ## License
 

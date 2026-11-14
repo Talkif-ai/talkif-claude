@@ -41,7 +41,7 @@ export const TASK_CONVENTION =
 /** A deadline as an ISO time: an ISO time itself, or "30m" / "2h" / "in 2 hours" from now. */
 export const parseDeadline = (raw: string, now: number): string | { error: string } => {
   const rel = /^(?:in\s+)?(\d+)\s*(m|min|mins|minutes?|h|hrs?|hours?)$/i.exec(raw.trim())
-  const at = rel ? now + Number(rel[1]) * (rel[2].toLowerCase().startsWith('h') ? 3_600_000 : 60_000) : Date.parse(raw.trim())
+  const at = rel ? now + Number(rel[1]) * ((rel[2] ?? '').toLowerCase().startsWith('h') ? 3_600_000 : 60_000) : Date.parse(raw.trim())
   if (!Number.isFinite(at)) return { error: `Deadline "${raw.trim()}" is not a time: write an ISO time or 30m / 2h.` }
   if (at - now < MIN_DEADLINE_MS || at - now > MAX_DEADLINE_MS) return { error: 'Deadline must be between a minute and 24 hours from now.' }
   return new Date(at).toISOString()
@@ -57,10 +57,10 @@ export const parseTaskMessage = (text: string, now: number): TaskRequest | { err
   let current: keyof TaskRequest | undefined
   for (const line of text.split('\n')) {
     const m = LABEL_LINE.exec(line)
-    const field = m ? LABELS[m[1].toLowerCase().replace(/\s+/g, ' ')] : undefined
+    const field = m ? LABELS[(m[1] ?? '').toLowerCase().replace(/\s+/g, ' ')] : undefined
     if (m && field) {
       current = field
-      fields[field] = [...(fields[field] ?? []), m[2]]
+      fields[field] = [...(fields[field] ?? []), m[2] ?? '']
     } else if (current) {
       fields[current]?.push(line)
     } else {

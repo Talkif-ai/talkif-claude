@@ -261,7 +261,7 @@ export class CallTaskScope {
   private spawning = 0
 
   /** The call task's turn of the session, if one runs. */
-  get turnId(): string | undefined {
+  turnId(): string | undefined {
     return this.turn
   }
 

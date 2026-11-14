@@ -29,8 +29,6 @@ import type { Presence, RingRules } from './away'
 import { redactBody } from './secrets'
 import { fenceUntrusted, untrustedNote } from './untrusted'
 import {
-  DEV_ENV_FILE,
-  DEV_ENV_FILES,
   FLOW_STEP,
   KEY_STEP,
   NO_FLOW_PROBLEM,
@@ -140,7 +138,7 @@ const TASK_TOOL_NAMES: ReadonlySet<string> = new Set(TASK_TOOLS.map(t => taskToo
 const PEERS_REFRESH_MS = 10 * 60_000
 // Sent as the User-Agent on every request to the backend and the bridge. Kept equal
 // to .claude-plugin/plugin.json's version: bump both together.
-export const VERSION = '0.31.0'
+export const VERSION = '0.31.1'
 const USER_AGENT = `talkif-claude/${VERSION}`
 // Debug pane: this session's bridge traffic, newest last (`/talkif traffic`; recorded only with the debug option).
 const TRAFFIC_PANE = 'talkif-traffic'
@@ -245,10 +243,9 @@ export const interviewPrompt = (questions: string[], context: string | undefined
     .filter(Boolean)
     .join('\n')
 
-// Module state: rebuilt on reload; the pending interview is restored from disk.
+// Module state: rebuilt on reload; the pending interview is restored from the plugin's store.
 let env: Env | undefined
 let pending: Pending | undefined
-let pendingPath = ''
 // call_ended items already handled (a repeat comes when a confirmation was lost).
 const ENDS_KEEP = 50
 let endsHandled: string[] = []
@@ -280,33 +277,17 @@ function reportProblem($: EngineInterface, problem: Problem) {
   void refreshStatus($)
 }
 
-async function statePaths($: EngineInterface) {
-  if (pendingPath) return
-  const { home } = await homeOf($)
-  // One state folder per Claude Code session: several sessions run this mod at once.
-  const stateDir = `${home}/.config/talkif/claude/${await $.session.id()}`
-  await $.process.run(['mkdir', '-p', stateDir])
-  pendingPath = `${stateDir}/pending.json`
-}
+// The pending interview of this Claude Code session, in the plugin's store (several
+// sessions run this mod at once, so the key names the session).
+const PENDING_PREFIX = 'pending:'
+const pendingKey = async ($: EngineInterface): Promise<string> => `${PENDING_PREFIX}${await $.session.id()}`
+// A pending interview left by a session that never came back is dropped after this long.
+const PENDING_KEEP_MS = 24 * 60 * 60_000
 
-// The developer file that was read (for messages), ~/ form.
-let devFileName = `~/${DEV_ENV_FILE}`
-
-// The key from the options; without one, the developer file (dev path).
+// The key from the apiKey option, nothing else.
 async function loadCredentials($: EngineInterface): Promise<Credentials> {
   if (credentials) return credentials
-  let devFile: string | undefined
-  if (!optApiKey.trim()) {
-    const { home } = await homeOf($)
-    for (const name of DEV_ENV_FILES) {
-      const path = `${home}/${name}`
-      if (!(await $.fs.exists(path))) continue
-      devFile = await $.fs.read(path)
-      devFileName = `~/${name}`
-      break
-    }
-  }
-  const resolved = resolveCredentials({ apiKey: optApiKey, apiUrl: optApiUrl }, devFile, devFileName)
+  const resolved = resolveCredentials({ apiKey: optApiKey, apiUrl: optApiUrl })
   if (!resolved.ok) {
     reportProblem($, resolved.problem)
     throw new SetupProblem(resolved.problem)
@@ -317,7 +298,6 @@ async function loadCredentials($: EngineInterface): Promise<Credentials> {
 
 async function loadEnv($: EngineInterface): Promise<Env> {
   if (env) return env
-  await statePaths($)
   const c = await loadCredentials($)
   env = { key: c.apiKey, url: c.url }
   return env
@@ -531,8 +511,20 @@ async function setAgentPrompt($: EngineInterface, prompt: string, notes: string)
 }
 
 async function savePending($: EngineInterface) {
-  await statePaths($)
-  await $.fs.write(pendingPath, pending ? JSON.stringify(pending) : '{}')
+  const key = await pendingKey($)
+  if (pending) await $.store.set(key, pending)
+  else await $.store.delete(key)
+}
+
+// Pending interviews of sessions that ended while a call was out and never came back.
+async function prunePending($: EngineInterface) {
+  const own = await pendingKey($)
+  for (const key of await $.store.keys()) {
+    if (!key.startsWith(PENDING_PREFIX) || key === own) continue
+    const saved: unknown = await $.store.get(key)
+    const armedAt = isRecord(saved) && typeof saved.armedAt === 'string' ? Date.parse(saved.armedAt) : Number.NaN
+    if (!Number.isFinite(armedAt) || Date.now() - armedAt > PENDING_KEEP_MS) await $.store.delete(key)
+  }
 }
 
 // A call this session took part in is over: the bridge says so once (call_ended), with
@@ -651,8 +643,7 @@ async function probeLatency($: EngineInterface): Promise<string> {
 
 // ---------------------------------------------------------------------------
 // Session bridge: this session answers each turn of a "session" voice agent.
-// Outbound HTTPS only (register, long-poll, reply). Starts once a key is set
-// (the apiKey option, or a TALKIF_BRIDGE_KEY in the developer file).
+// Outbound HTTPS only (register, long-poll, reply). Starts once the apiKey option is set.
 // TODO(bridge): hand spoken instructions to the main session after the call
 // ($.prompt.submit) instead of only reading them back.
 // ---------------------------------------------------------------------------
@@ -663,9 +654,7 @@ async function probeLatency($: EngineInterface): Promise<string> {
 // presence: on a presence turn, whether the developer is at the terminal now.
 type BridgeTurn = { requestId: string; callId: string; messages: unknown[]; kind: string; question?: string; intent?: string; notify?: string; callerName?: string; status?: string; endReason?: string; transcript?: string; fromSession?: string; task?: TaskCard; presence?: Presence }
 
-// One bridge per account key: the apiKey option (the "personal" bridge), or on the
-// developer path TALKIF_BRIDGE_KEY and TALKIF_<NAME>_BRIDGE_KEY for others (e.g. an
-// organization). The session registers in each, so a call in any of them reaches it.
+// One bridge per account key: the apiKey option, the "personal" bridge.
 // accountName: the account's display name as the backend sends it (register answer, else
 // the consent read of /talkif setup); until it does, the bridge is shown by its slot name.
 // timer: the wait before this bridge's next poll (none while a poll runs); wakeBridges cuts it short.
@@ -699,7 +688,7 @@ export const parsePeers = (body: unknown): Peer[] => {
       sessionId: s.session_id as string,
       label: typeof s.label === 'string' ? s.label : undefined,
       description: typeof s.description === 'string' ? s.description : undefined,
-      handles: Array.isArray(s.handles) ? s.handles.filter((h): h is string => typeof h === 'string') : [],
+      handles: Array.isArray(s.handles) ? s.handles.filter((handle): handle is string => typeof handle === 'string') : [],
     }))
     // Stable order: the prompt section stays the same while nothing changes.
     .sort((a, b) => (a.label ?? a.sessionId).localeCompare(b.label ?? b.sessionId))
@@ -818,7 +807,8 @@ async function cmRing($: EngineInterface, arg: string): Promise<string> {
   const { url } = await loadEnv($)
   const current: unknown = await $.store.get(ringStoreKey(url))
   if (!arg) {
-    const now = isRingTarget(current) ? `Now: ${current.name}.` : list.length === 1 ? `Now: ${list[0].name}, the only one.` : 'Nobody picked yet.'
+    const only = list.length === 1 ? list[0] : undefined
+    const now = isRingTarget(current) ? `Now: ${current.name}.` : only ? `Now: ${only.name}, the only one.` : 'Nobody picked yet.'
     return [...list.map((t, i) => `${i + 1}. ${t.name}`), `Pick with /talkif ring <number or name>. ${now}`].join('\n')
   }
   const picked = chooseRingTarget(list, arg)
@@ -854,44 +844,16 @@ const turnPrompt = (messages: unknown[]): string =>
     `If the developer says goodbye or the call should end, end your reply with ${END_MARK}.`,
   ].join('\n')
 
-// The local Talkif agent (connectors/agent.mjs) holds a WebSocket per session,
-// so turns are pushed instead of long-polled over the internet; this plugin
-// reaches it over its Unix socket with the backend's own paths. No agent, or
-// the agent unreachable: straight to the backend as before.
-const AGENT_RECHECK_MS = 30_000
-let agentSocket: string | undefined
-let agentCheckedAt = 0
-
-async function agentPath($: EngineInterface): Promise<string | undefined> {
-  if (Date.now() - agentCheckedAt < AGENT_RECHECK_MS) return agentSocket
-  agentCheckedAt = Date.now()
-  const { home } = await homeOf($)
-  const path = `${home}/.config/talkif/claude/agent.sock`
-  agentSocket = (await $.fs.exists(path)) ? path : undefined
-  return agentSocket
-}
-
+// Every request of the session bridge goes to the Talkif API over HTTPS (the apiUrl
+// option when set), with the bridge's key.
 async function bridgeFetch($: EngineInterface, bridge: Bridge, path: string, method: string, body?: unknown) {
   const { url } = await loadEnv($)
-  const init = {
+  return $.http.fetch(`${url}/api/v1/session-bridge${path}`, {
     method,
     headers: { Authorization: `Bearer ${bridge.key}`, 'Content-Type': 'application/json', 'User-Agent': USER_AGENT },
     // Replies, events, recaps and briefings reach a call and the channel log: no secret goes out.
     body: body === undefined ? undefined : JSON.stringify(redactBody(body)),
-  }
-  const socketPath = await agentPath($)
-  if (socketPath) {
-    try {
-      return await $.http.fetch(`http://agent/api/v1/session-bridge${path}`, { ...init, socketPath })
-    } catch (err) {
-      // A socket file left behind by an agent that is gone: back to the backend.
-      $.ui.log(`local agent unreachable (${String(err)}); using the backend directly`)
-      agentSocket = undefined
-      agentCheckedAt = Date.now()
-      bridge.session = undefined
-    }
-  }
-  return $.http.fetch(`${url}/api/v1/session-bridge${path}`, init)
+  })
 }
 
 // "repo (branch)" of the session's working directory, so the agent can tell sessions apart.
@@ -1541,19 +1503,10 @@ async function setupChecks($: EngineInterface): Promise<Check[]> {
   checks.push({
     name: 'API key',
     ok: true,
-    detail: `${maskKey(c.apiKey)}, ${c.source === 'options' ? 'from the apiKey option (keychain)' : `from the developer file ${devFileName} (the apiKey option is empty)`}. Developer → Credentials lists keys the same way`,
+    detail: `${maskKey(c.apiKey)}, from the apiKey option (keychain). Developer → Credentials lists keys the same way`,
   })
-  const where = optApiUrl.trim()
-    ? 'the API URL option'
-    : c.source === 'options'
-      ? 'Talkif, the default'
-      : `TALKIF_API_URL in ${devFileName}, else the default`
-  const bridgeKey = (c.bridges.find(b => b.name === 'personal') ?? c.bridges[0])?.key
-  if (!bridgeKey) {
-    checks.push({ name: 'Backend', ok: true, detail: `${c.url} (${where})` })
-    checks.push({ name: 'Connectors', ok: false, detail: `no TALKIF_BRIDGE_KEY in ${devFileName}`, next: KEY_STEP })
-    return checks
-  }
+  const where = optApiUrl.trim() ? 'the API URL option' : 'Talkif, the default'
+  const bridgeKey = c.apiKey
 
   // The consent read doubles as the reachability and Connectors-scope check.
   const consent = await probe($, c.url, bridgeKey, '/connectors/consent')
@@ -1573,7 +1526,7 @@ async function setupChecks($: EngineInterface): Promise<Check[]> {
     parsed
       ? consentCheck(parsed)
       : consent.status === 200
-        ? { name: 'Connectors', ok: false, detail: 'the backend gave an unexpected consent answer', next: 'Update the plugin (claude plugin update talkif@talkif-claude).' }
+        ? { name: 'Connectors', ok: false, detail: 'the backend gave an unexpected consent answer', next: 'Update the Talkif plugin in /plugin.' }
         : failedProbe('Connectors', 'Connectors', consent.status, consent.text),
   )
 
@@ -1879,7 +1832,7 @@ type Ring = { ok: true; ringSecs: number; callId: string } | { ok: false; reason
 // /talkif ring or anyone else: Talkif rings the account's one person, or refuses where several take calls.
 async function ringOwner($: EngineInterface, briefing: string, person?: RingTarget, ownPhoneOnly = false): Promise<Ring> {
   const bridge = personalBridge()
-  if (!bridge) return { ok: false, reason: setupProblem ? problemText(setupProblem) : 'no key for the personal account (TALKIF_BRIDGE_KEY)' }
+  if (!bridge) return { ok: false, reason: setupProblem ? problemText(setupProblem) : 'no API key is set yet' }
   const { url } = await loadEnv($)
   // One call can ring someone else (call_me `to`); otherwise the person picked with /talkif ring.
   const target: unknown = ownPhoneOnly ? undefined : (person ?? (await $.store.get(ringStoreKey(url))))
@@ -1906,7 +1859,7 @@ async function ringOwner($: EngineInterface, briefing: string, person?: RingTarg
 }
 
 async function homeOf($: EngineInterface): Promise<{ home: string }> {
-  return { home: (await $.process.run(['printenv', 'HOME'])).stdout.trim() }
+  return { home: ((await $.env.get('HOME')) ?? '').trim() }
 }
 
 // ---------------------------------------------------------------------------
@@ -2052,11 +2005,79 @@ function dialogOpen($: EngineInterface) {
   watch($, { id: ask.toolUseId, kind: 'permission', tool: ask.tool, input: ask.input })
 }
 
+// The session's own tool calls that have not settled yet, newest last. A permission
+// request names a tool and its input, not the call, so it is matched to one of these.
+type OpenCall = { toolUseId: string; tool: string; call: unknown }
+const openCalls: OpenCall[] = []
+const OPEN_CALLS_KEEP = 50
+
+// The session's own work, not a call's task or a turn a call started: only that may ring.
+const ownWorkNow = (): boolean => scope.turnId() === undefined && !(currentTurn !== undefined && talkifTurns.has(currentTurn))
+
+/** A tool call of the session's own loop is about to run (tool.call, before the permission check). */
+function callStarted($: EngineInterface, toolUseId: string | undefined, tool: string, call: unknown, agentId: string | undefined) {
+  if (agentId !== undefined || toolUseId === undefined) return
+  openCalls.push({ toolUseId, tool, call })
+  openCalls.splice(0, Math.max(0, openCalls.length - OPEN_CALLS_KEEP))
+  // A question in a dialog always waits for the developer: it rings like an open question.
+  if (tool === QUESTION_TOOL && ownWorkNow()) noteAsk($, toolUseId, tool, call)
+}
+
+/** The open call a permission request is about: the newest of that tool with the same input, else the newest of that tool. */
+function openCallFor(tool: string, input: unknown): OpenCall | undefined {
+  // The request's input field by field against the call's (tool.call carries the input's fields at its top level).
+  const sameInput = (c: OpenCall): boolean => {
+    const call = c.call
+    if (!isRecord(input) || !isRecord(call)) return false
+    return Object.entries(input).every(([k, v]) => JSON.stringify(call[k]) === JSON.stringify(v))
+  }
+  let newest: OpenCall | undefined
+  for (let i = openCalls.length - 1; i >= 0; i--) {
+    const c = openCalls[i]
+    if (!c || c.tool !== tool) continue
+    if (sameInput(c)) return c
+    newest ??= c
+  }
+  return newest
+}
+
+/**
+ * Claude Code is about to show a permission dialog (its PermissionRequest event). The
+ * plugin never answers it: it only notes that the session waits, so a ring (away mode,
+ * ring options) or the call that gave the task can say so. Allowing stays at the terminal.
+ */
+function permissionRequested($: EngineInterface, tool: string, input: unknown, agentId: string | undefined) {
+  // A subagent's prompt, and a question dialog (noted when its call started), are not this.
+  if (agentId !== undefined || tool === QUESTION_TOOL) return
+  const turnId = scope.turnId()
+  if (turnId === undefined) {
+    if (!ownWorkNow()) return
+    const call = openCallFor(tool, input)
+    if (call) noteAsk($, call.toolUseId, tool, input)
+    return
+  }
+  // A task given on a call stops at a permission prompt: its call (or the ring-back) hears what it waits for.
+  const work = [...callWork.values()].find(w => w.turnId === turnId)
+  if (!work) return
+  const what = isRecord(input) && typeof input.command === 'string' ? `${tool}: ${input.command}` : tool
+  const note = `Waiting for permission to run ${what}. Allow it at the terminal, or add it to Claude Code's permission rules.`
+  // A task's sender cannot approve a permission here: it hears it as progress, not a question to answer.
+  bridgeEvent($, work.bridge, work.task ? 'progress' : 'question', note, work.requestId)
+    .then(async delivered => {
+      if (delivered || !wantsRing(work.notify)) return
+      const rang = await ringOwner($, callbackBriefing('blocked', note))
+      if (!rang.ok) $.ui.log(`permission ring failed: ${rang.reason}`)
+    })
+    .catch(err => $.ui.log(`bridge: permission note failed: ${String(err)}`))
+}
+
 /** A call settled (ran or refused): it waits for nobody. */
 function settleCall($: EngineInterface, toolUseId: string | undefined) {
   if (toolUseId === undefined) return
   const i = asks.findIndex(a => a.toolUseId === toolUseId)
   if (i >= 0) asks.splice(i, 1)
+  const open = openCalls.findIndex(c => c.toolUseId === toolUseId)
+  if (open >= 0) openCalls.splice(open, 1)
   resolveWaiting($, toolUseId)
 }
 
@@ -2136,7 +2157,7 @@ async function ringFor($: EngineInterface, w: Waiting) {
   // Switched off with /talkif, or never joined Talkif (folders option): this session never rings.
   if (!personalBridge()?.session || !(await bridgeEnabled($))) return drop('not rung: this session is not on Talkif')
   // A call is already on its way or running: that one reaches them.
-  if (pending || scope.turnId !== undefined || callWork.size > 0) return drop('not rung: a call is already pending')
+  if (pending || scope.turnId() !== undefined || callWork.size > 0) return drop('not rung: a call is already pending')
   // The last call was not answered: no next call from it.
   if (Date.now() < quietUntil) return drop('not rung: the last call was not answered')
   const hour = Date.now() - 60 * 60_000
@@ -2235,7 +2256,7 @@ async function currentState($: EngineInterface): Promise<TalkifState> {
   return {
     problem: setupProblem ?? [...paused.values()][0],
     off: await offReason($),
-    onCall: pending !== undefined || scope.turnId !== undefined || callWork.size > 0,
+    onCall: pending !== undefined || scope.turnId() !== undefined || callWork.size > 0,
     // Offline only when no account can be reached: one failing account is not this machine's network.
     offline: bridges.length > 0 && bridges.every(b => b.failures >= 2),
     // Two failed polls in a row: retrying, shown as connecting until a poll goes through.
@@ -2359,19 +2380,16 @@ export const register: Register = (on, options) => {
   }
   // A subagent a call task starts runs read-only too: in the foreground, never as a
   // teammate or a workflow's agent (those live past the task), its id remembered so
-  // its tool calls stay guarded whenever they come.
+  // its tool calls stay guarded whenever they come. The spawn itself is never changed:
+  // it goes on as asked, or is refused.
   on('agent.spawn', async ($, e, next) => {
     const covered = callTasks === 'read-only' && scope.spawnStarted(e.parentAgentId)
     let agentId: string | undefined
     try {
-      if (!covered) {
-        const result = await next(e)
-        agentId = result.agentId
-        return result
-      }
-      if (e.isTeammate || e.workflow) return { deny: 'This task came from a phone call and runs read-only: no teammates or workflows.' }
-      // A resumed run's content keys are fixed; its id is already remembered.
-      const result = await next(e.resume ? e : { ...e, background: false })
+      if (covered && (e.isTeammate || e.workflow)) return { deny: 'This task came from a phone call and runs read-only: no teammates or workflows.' }
+      // A background agent reports after the task's turn ended, outside its read-only turn. A resumed run keeps how it ran.
+      if (covered && e.background && !e.resume) return { deny: 'This task came from a phone call and runs read-only: subagents run in the foreground only. Start it again without running it in the background.' }
+      const result = await next(e)
       agentId = result.agentId
       return result
     } finally {
@@ -2385,47 +2403,25 @@ export const register: Register = (on, options) => {
   on('tool.call', ($, e, next) => {
     if (isMcpSessionTool(e.tool)) return { deny: MCP_SESSION_TOOL_NOTE }
     const denial = callTaskDenial(e)
-    // A call that settled (it ran, or was refused here or on the phone) waits for nobody.
-    if (!denial) return next(e).finally(() => settleCall($, e.tool_use_id))
+    if (!denial) {
+      callStarted($, e.tool_use_id, e.tool, e, e.agentId)
+      // A call that settled (it ran, or was refused here or at the terminal) waits for nobody.
+      return next(e).finally(() => settleCall($, e.tool_use_id))
+    }
     void trace($, 'info', 'task', 'read-only', `refused ${e.tool}`)
     return { deny: denial }
   }).catch(($, e, next) => {
-    // A re-entry (another hook's tool call beneath) is judged from e alone; a failure refuses only during a call task.
-    if (next.called) return next(e)
-    if (next.error.kind === 're-entry' || !inCallTask(e.agentId)) {
-      const denial = callTaskDenial(e)
-      return denial ? { deny: denial } : next(e)
-    }
+    // A failure refuses only during a call task.
+    if (next.called || !inCallTask(e.agentId)) return next(e)
     return { deny: 'Talkif: the read-only guard for call tasks failed; the tool was not run.' }
   })
 
-  // Permissions stay Claude Code's own (settings rules, modes): this plugin never
-  // grants one. A task given on a call that stops at a permission prompt would
-  // otherwise sit there silently while the developer is on the phone, so the
-  // call (or the ring-back) hears what it is waiting for.
-  on('tool.check', async ($, e, next) => {
-    const result = await next(e)
-    const turnId = scope.turnId
-    // A prompt in the developer's own work (not a call's task, which tells its call, and not
-    // a turn a call started): it may ring them later if it keeps waiting (ring options).
-    if (result.decision === 'ask' && !e.agentId && !turnId && e.tool_use_id && e.approver === 'person' && !(currentTurn && talkifTurns.has(currentTurn))) {
-      noteAsk($, e.tool_use_id, e.tool, e.input)
-    }
-    if (result.decision !== 'ask' || !turnId || e.agentId) return result
-    const work = [...callWork.values()].find(w => w.turnId === turnId)
-    const what = isRecord(e.input) && typeof e.input.command === 'string' ? `${e.tool}: ${e.input.command}` : e.tool
-    if (work) {
-      const note = `Waiting for permission to run ${what}. Allow it at the terminal, or add it to Claude Code's permission rules.`
-      // A task's sender cannot approve a permission here: it hears it as progress, not a question to answer.
-      bridgeEvent($, work.bridge, work.task ? 'progress' : 'question', note, work.requestId)
-        .then(async delivered => {
-          if (delivered || !wantsRing(work.notify)) return
-          const rang = await ringOwner($, callbackBriefing('blocked', note))
-          if (!rang.ok) $.ui.log(`permission ring failed: ${rang.reason}`)
-        })
-        .catch(err => $.ui.log(`bridge: permission note failed: ${String(err)}`))
-    }
-    return result
+  // Permissions stay Claude Code's own (settings rules, modes, the dialog): this hook
+  // never answers a permission request, it hands every one on unchanged. It only notes
+  // that the session waits at a dialog (see permissionRequested).
+  on('classic.PermissionRequest', ($, e, next) => {
+    permissionRequested($, e.tool_name, e.tool_input, e.agent_id)
+    return next(e)
   })
 
   // The permission dialog is open and nobody typed for a few seconds (Claude Code's own
@@ -2472,13 +2468,11 @@ export const register: Register = (on, options) => {
     }
     // A reload keeps a call that was armed before it.
     try {
-      await statePaths($)
-      if (await $.fs.exists(pendingPath)) {
-        const saved: unknown = JSON.parse(await $.fs.read(pendingPath))
-        if (isRecord(saved) && typeof saved.armedAt === 'string' && isStringList(saved.questions) && typeof saved.callId === 'string') {
-          pending = { armedAt: saved.armedAt, questions: saved.questions, callId: saved.callId, callee: typeof saved.callee === 'string' ? saved.callee : undefined }
-          armGiveUp($, saved.armedAt)
-        }
+      await prunePending($)
+      const saved: unknown = await $.store.get(await pendingKey($))
+      if (isRecord(saved) && typeof saved.armedAt === 'string' && isStringList(saved.questions) && typeof saved.callId === 'string') {
+        pending = { armedAt: saved.armedAt, questions: saved.questions, callId: saved.callId, callee: typeof saved.callee === 'string' ? saved.callee : undefined }
+        armGiveUp($, saved.armedAt)
       }
     } catch (err) {
       $.ui.log(`could not restore state: ${String(err)}`)

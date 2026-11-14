@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.31.1 — 2026-11-14
+
+- **The API key comes only from the Talkif API key option.** The developer file `~/.config/talkif/dev.env` (and its extra accounts) is no longer read. If you used it, paste the key in `/plugin` → Installed → talkif → Configure options.
+- **No files of its own.** A `call_me` call waiting for its outcome is now kept in Claude Code's store for the plugin, not in `~/.config/talkif/claude/`; that folder from older versions can be deleted. The plugin starts no program but `git` (to name the session), and reads no file.
+- **Permission prompts stay yours.** The plugin now learns that a session waits at a permission dialog from Claude Code's permission request, and hands every request on exactly as it came; it never answers one. Rings about a waiting prompt work as before; a call hears about a task waiting at a prompt only once its dialog is really shown.
+- During a read-only task from a call, a subagent asked to run in the background is refused with a note to start it in the foreground (it used to be moved to the foreground silently).
+- The connector scripts (knowledge folder, launcher, local agent) are no longer part of the plugin.
+- New in the README: **What this plugin does on your computer**: the hosts it contacts and what it sends, the programs it starts, what it keeps, the prompts it submits and what each hook decides.
+
 ## 0.31.0 — 2026-11-14
 
 - **Away mode.** `/talkif away` (`30m`, `2h`; 12 hours without a time) and `/talkif back`, or say it on a call ("I'm going out for an hour"). Talkif keeps it, and every session of yours, on any computer, knows; it rides beside the next message, never in the system prompt. The status line shows `Talkif: on, away`.
