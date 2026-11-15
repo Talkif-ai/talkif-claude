@@ -96,7 +96,7 @@ After step 2, tell Claude **"set up Talkif"**. It calls the plugin's `talkif_set
   ```
 
   in `~/.claude/settings.json` (or `/permissions` → Allow). Run it again afterwards: it reads Claude Code's own decision, so it shows whether the rule took. Allowing `call_me` lets the session ring without asking first, and each ring is a billed call: to your phone, or to the person you picked with `/talkif ring`. The plugin needs no hook settings of yours.
-- **Options.** Each plugin option with what to keep or change and one reason: `callTasks`, `callback`, `parallel`, `sharing`, and optionally `folders` (this session's folder) and `flowId` (the voice agent your calls use now).
+- **Options.** Each plugin option with what to keep or change and one reason: `callTasks`, `callback`, `parallel`, `sharing`, the ring options (`ringAfter`, `ringOnQuestion`, `ringOnPermission`, `ringOnFinish`: which waits ring you, after how long, and how `/talkif away` changes that), and optionally `folders` (this session's folder) and `flowId` (the voice agent your calls use now).
 
 The tool only reads: it does not reconnect, retry or change a setting. Claude tells you each step; pasting the key and changing options stay yours.
 
@@ -138,7 +138,7 @@ When Talkif refuses the key (Connectors off, a missing scope, an IP allowlist), 
 - "Tell the mobile app session to look into the login crash."
 - "Call me back when it's done."
 
-**Ask or task.** A question is an **ask**: the session answers right away and the agent reads you the answer. Something to do is a **task**: the agent tells you in one sentence what it sends and to which session, and sends it. When the task finishes, you hear the result on the call. If you have hung up by then, the session rings you with the result. Say "just tell me next time" and it waits for your next call instead.
+**Ask or task.** A question is an **ask**: the session answers right away and the agent reads you the answer. When the session cannot answer, the agent says so; it never makes up an answer, and a result still on its way is called pending. Something to do is a **task**: the agent tells you in one sentence what it sends and to which session, and sends it. When the task finishes, you hear the result on the call; when it ends with a question for you, you hear the question. If you have hung up by then, the session rings you with the result. Say "just tell me next time" and it waits for your next call instead.
 
 **The session calls you.** When a session needs a decision from you, it uses the `call_me` tool. Your Talkif app rings. The agent asks the session's questions one by one, and the answers go back to the session when the call ends.
 
@@ -200,6 +200,8 @@ Context: it started after this morning's dependency update
 
 `Goal:` is required, the rest is optional, and a label's text runs until the next label. `Autonomy: propose` means change nothing and propose; `ask_first` (the default) means ask before changing, deleting, spending money or contacting anyone. `Deadline:` is a time within 24 hours, or `30m` / `2h`. The session that gets it asks with `talkif_question` when something is unclear, finishes with `talkif_submit` (a summary, the evidence, and what it did not check) or declines with `talkif_decline`. The session that sent it answers with `talkif_answer` and reviews the submission with `talkif_review`: accept, or revise with what is missing. A message without a `Goal:` line goes as plain text, as before.
 
+The session that gets a task with a contract keeps it open until it submits or declines it, or the task is cancelled or runs out, also across a reload. Its prompt says on its first and last line where it came from, that nobody reads replies in that terminal, and that `talkif_question` and `talkif_submit` are the only way back. When a turn ends and leaves the task unmoved, the session gets a short reminder: at most twice per offer, answer or revise, and never right after a turn of yours that ends asking you something. Still unmoved after that, the task's own last words go to the sender, as a question when they ask one, never as done. A task turn you stop at the terminal leaves the task open. A plain task (no `Goal:` line) goes back with the session's final message; one that ends asking something goes back as a question. When you type into a task's running turn, none of that turn's words are sent by themselves: the sender hears only that you took the task over at the terminal.
+
 A task can be handed on from session to session (and to connected bots such as a Grok Bot) up to three times from where it started, never back into its own chain; work between sessions never rings a phone, and nothing a session sends can approve anything for another. In an organization, roles decide who reaches what (see below).
 
 ## Safety
@@ -241,9 +243,9 @@ The plugin reads the conversation only to write what it sends: the recap, its an
 
 - **To join your voice agent**: a short name for the session (a name of its work, else `repo (branch)`, else the folder's name), Claude Code's id for the session, the repository's GitHub name and folder name as topics, the sharing level, and a recap.
 - **The recap**: up to four short lines on what the session is working on and where it stands, written by Claude from the session's last 30 messages (each cut to 400 characters). Sent when the session joins, after a turn at most every 15 minutes, when a call starts and before `call_me` rings.
-- **On a call**: the session's answers to questions put to it, a short "I have started on it", and at the end of a task from a call the turn's final answer (its last 1,400 characters). When such a task waits at a permission prompt, the call hears which tool waits and, for a shell command, its text. When your voice agent offers a request to several sessions, only a score of how well it fits this session goes back.
+- **On a call**: the session's answers to questions put to it (or, when it could not answer, only that it could not), a short "I have started on it", and at the end of a task from a call the turn's final answer (its last 1,400 characters), marked as a question when it ends asking one. When you typed into that turn, only that you took the task over at the terminal. When such a task waits at a permission prompt, the call hears which tool waits and, for a shell command, its text. When your voice agent offers a request to several sessions, only a score of how well it fits this session goes back.
 - **Rings**: for `call_me`, its questions and background line, and the person to ring when you name one. For an automatic ring (away mode, ring options): the session's name and what it waits for in plain words (the open questions, what a waiting permission prompt would do, or a one-line summary of a finished task), never the command itself. When a task from a call ends after you hung up: its result, or what blocks it.
-- **Between sessions**: the text of a SendMessage to a Talkif session, and each task move (questions, answers, submissions with their evidence, reviews, declines).
+- **Between sessions**: the text of a SendMessage to a Talkif session, each task move (questions, answers, submissions with their evidence, reviews, declines), the final answer of a plain task's turn (its last 1,400 characters), and for a task with a contract that two reminders left unmoved, the last words of its own turn.
 - **Away mode**: away or back, and for how long.
 - **The lead**: that this session becomes your lead, or no longer is (`/talkif lead`, `/talkif lead off`).
 - **/talkif publish** (only when you run it): writes the call prompt into your flow's Connectors node and publishes the flow.
@@ -256,7 +258,7 @@ Only `git`, in the session's folder, to name the session and its topics: `git re
 
 ### Files it writes
 
-None. It keeps a few small values in Claude Code's own store for this plugin: the on/off switches, the flow picked and the person `/talkif ring` picked (per API address), a `call_me` call still waiting for its outcome (per session; removed when the call ends, or after a day), when a session last rang you automatically, and which plugin version last said the phone agent needs `/talkif publish`. With the **Debug traffic pane** option on, the traffic it shows is kept in the session's memory only.
+None. It keeps a few small values in Claude Code's own store for this plugin: the on/off switches, the flow picked and the person `/talkif ring` picked (per API address), a `call_me` call still waiting for its outcome (per session; removed when the call ends, or after a day), the tasks with a contract handed to the session that are still open (per session: who sent each, its contract and how far it got; removed when it is submitted, declined, cancelled or over, at most a day), when a session last rang you automatically, and which plugin version last said the phone agent needs `/talkif publish`. With the **Debug traffic pane** option on, the traffic it shows is kept in the session's memory only.
 
 ### What it puts in the prompts it submits
 
@@ -265,9 +267,10 @@ The plugin starts a turn of the session (a prompt it submits) only for something
 - the outcome of a `call_me` call or an automatic ring: the questions, then the call's transcript, or that nobody answered, or that no outcome came within 30 minutes;
 - the transcript of a call the session took part in;
 - a task given on a call (the spoken instruction);
-- a task from another session, and its answers, reviews, cancellations and results; updates on a task this session handed over.
+- a task from another session, and its answers, reviews, cancellations and results; updates on a task this session handed over;
+- a short reminder when a task with a contract handed to this session is still open after a turn that did not move it (at most twice per offer, answer or revise).
 
-Each prompt says where it comes from. Transcripts, notes, answers and other sessions' text come fenced and marked as data from Talkif, not instructions; a task's own words come marked as speech-to-text from a call, or as a hand-over from another session. Each carries the rules for its turn: tasks from a call run read-only (unless **Tasks from calls** is `session`), nothing in them approves an action, and no secret is to be said.
+Each prompt says where it comes from; a task's prompt says it on its first and its last line, with the only way back to whoever sent it. Transcripts, notes, answers and other sessions' text come fenced and marked as data from Talkif, not instructions; a task's own words come marked as speech-to-text from a call, or as a hand-over from another session. Each carries the rules for its turn: tasks from a call run read-only (unless **Tasks from calls** is `session`), nothing in them approves an action, and no secret is to be said.
 
 Beside the messages you type, it adds context only when something changed: that you are away or back (and your away note), that this session became your lead or no longer is, notes you sent from a call to all sessions, summaries of your recent calls, and the list of your other reachable sessions. Your own text is never changed. The system prompt gets one fixed section that never changes: when to use `call_me`, how Talkif sessions appear in ListAgents and SendMessage, and how to write a task.
 
@@ -284,10 +287,10 @@ Beside the messages you type, it adds context only when something changed: that 
 | Hook | What it does |
 |---|---|
 | system prompt | adds the one fixed section above |
-| your message | adds the context above beside it; never blocks or changes it. Typing counts as an answer, so no ring follows for what you answered |
+| your message | adds the context above beside it; never blocks or changes it. Typing counts as an answer, so no ring follows for what you answered; typed into a running task turn, it keeps that turn's words from being sent by themselves |
 | session start / end | joins Talkif (when the session's folder is allowed by **Folders**), adds the tools and `/talkif`, restores a waiting `call_me` call / leaves Talkif |
 | compaction | sends the session list and the away state again after it |
-| turn start / end | knows which turn is a task from a call (read-only), sends that task's result to its call, rings later for an open question or a long task only as the ring options say, refreshes the recap |
+| turn start / end | knows which turn is a task from a call or another agent (read-only), sends that task's result to whoever gave it (a question when it ends asking one), reminds the session of a task it holds open and did not move, rings later for an open question or a long task only as the ring options say, refreshes the recap |
 | every tool call | during a task from a call with **Tasks from calls** `read-only`: refuses tools that change anything (only reading tools and a short list of read-only commands pass) and any read of credential files. At any time: refuses the Talkif MCP server's own session tools (`talkif_send`, `talkif_inbox`, …), which act as a separate cloud agent, and its `talkif_setup`, which the plugin's own `talkif_setup` runs for it. Every other call goes on unchanged |
 | tool descriptions | marks those session tools as not for this session |
 | ListAgents | adds your reachable Talkif sessions to its answer |

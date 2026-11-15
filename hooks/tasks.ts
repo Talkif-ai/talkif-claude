@@ -102,6 +102,10 @@ export type TaskCard = {
   role: 'sender' | 'receiver'
   state: string
   with?: string
+  /** What the other side is (a voice assistant, a coding session, a bot), when Talkif says it. */
+  withKind?: string
+  /** ISO time Talkif ends the task. */
+  expiresAt?: string
   goal: string
   doneWhen?: string
   deliverable?: string
@@ -126,6 +130,8 @@ export const parseTaskCard = (v: unknown): TaskCard | undefined => {
     role: v.role === 'sender' ? 'sender' : 'receiver',
     state: str(v.state) ?? 'offered',
     with: str(v.with),
+    withKind: str(v.withKind),
+    expiresAt: str(v.expiresAt),
     goal: v.goal,
     doneWhen: str(v.doneWhen),
     deliverable: str(v.deliverable),
@@ -184,6 +190,133 @@ export const outcomeWords = (t: TaskCard): string => {
   const state = t.outcome ?? t.state
   if (state === 'expired' && t.reason === 'no_answer') return 'not taken in time'
   return OUTCOMES[state] ?? state
+}
+
+// ---- Who sent a task, as its prompts name them ----
+
+/** A name from another agent, as one plain line: letters, digits, spaces and . ' _ - only. */
+const plainName = (raw: string | undefined, max: number): string | undefined => {
+  const name = (raw ?? '').normalize('NFC').replace(/[^\p{L}\p{M}\p{N} .'_-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, max).trim()
+  return name || undefined
+}
+
+/** The other side's name on a card, safe to quote in a prompt line. */
+export const senderName = (t: { with?: string }): string => plainName(t.with, 60) ?? 'another agent'
+
+/** What the other side is ("voice assistant", "coding session"), when the card says it. */
+export const senderKind = (t: { withKind?: string }): string | undefined => plainName(t.withKind?.replace(/[_-]+/g, ' '), 30)?.toLowerCase()
+
+/**
+ * A short id for the first line of a task's prompts. The end of the id, not its start:
+ * Talkif's ids start with the time, so two tasks in the same minute share their first characters.
+ */
+export const shortTaskId = (id: string): string => id.replace(/[^0-9A-Za-z]/g, '').slice(-8) || id.slice(0, 8)
+
+// A live call (2026-11-15): a task from a voice assistant was answered in the terminal as if
+// the developer had typed it, and the result never went back. Every task prompt says, first
+// and last, where it came from and the only way back.
+export const NOBODY_HERE = 'Whoever asked for it is not at this terminal; nobody reads replies here.'
+
+/** The first line of a prompt about a task with a contract handed to this session (after its mark). */
+export const contractTaskHeader = (t: { taskId: string; with?: string; withKind?: string }, news?: string): string => {
+  const kind = senderKind(t)
+  return [
+    `TALKIF TASK ${shortTaskId(t.taskId)} from "${senderName(t)}"${kind ? ` (${kind})` : ''}, another agent, through Talkif${news ? `: ${news}` : ''}.`,
+    NOBODY_HERE,
+    'Ask with talkif_question; deliver with talkif_submit. That is the only way it reaches them.',
+  ].join(' ')
+}
+
+/** The last line of the same prompt, with the id the tools take. */
+export const contractTaskFooter = (t: { taskId: string; with?: string }): string =>
+  `Remember: "${senderName(t)}" sees only talkif_question, talkif_submit and talkif_decline (taskId ${t.taskId}). A reply in this terminal reaches nobody.`
+
+/** The first line of a prompt about a plain task (no contract) another session handed over (after its mark). */
+export const sessionTaskHeader = (requestId: string, from: string): string =>
+  `TALKIF TASK ${shortTaskId(requestId)} from "${plainName(from, 60) ?? 'another session'}", another of your sessions, through Talkif. ${NOBODY_HERE} Your final message goes back to it by itself: that is the only way it reaches them.`
+
+/** The last line of the same prompt. */
+export const sessionTaskFooter = (from: string): string =>
+  `Remember: only your final message goes back to "${plainName(from, 60) ?? 'another session'}". Make it stand alone; if you need something from them, end it with that question. A reply in this terminal reaches nobody else.`
+
+// ---- Tasks handed to this session that are still open ----
+// Kept until talkif_submit, talkif_decline, a cancel or the task's end, and across a
+// reload: a turn that leaves one unmoved gets a short reminder, at most MAX_NUDGES times.
+
+/** Reminders per task after each offer, answer or revise. */
+export const MAX_NUDGES = 2
+/** A task lives a day at most (Talkif's limit): kept no longer when its card names no end. */
+const OPEN_TASK_KEEP_MS = 24 * 60 * 60_000
+/** The contract kept for a reminder that stands alone after a compaction. */
+const KEPT_CONTRACT_CHARS = 4_000
+
+export type OpenTask = {
+  taskId: string
+  /** The sender's name and kind, as senderName / senderKind give them. */
+  sender: string
+  senderKind?: string
+  /** The account (bridge) the task lives in. */
+  account: string
+  /** The contract as labelled lines, for the reminder. */
+  contract: string
+  autonomy: string
+  /** ISO time it ends on Talkif's side. */
+  expiresAt: string
+  /** A turn of it has run (the offer, an answer, a revise, a reminder). */
+  started: boolean
+  /** A prompt of it is submitted and its turn has not started yet. */
+  queued: boolean
+  /** It asked with talkif_question and waits for the answer. */
+  waiting: boolean
+  /** Reminders since the last offer, answer or revise. */
+  nudges: number
+  /** The turn of it running now: kept across a reload, so its end is still known as its own. */
+  turnId?: string
+}
+
+const validTime = (iso: string | undefined): string | undefined => (iso !== undefined && Number.isFinite(Date.parse(iso)) ? iso : undefined)
+
+/** The card of an offer, answer or revise as an open task: its prompt is queued, its reminders start over. */
+export const openTaskOf = (t: TaskCard, account: string, now: number, before?: OpenTask): OpenTask => {
+  const kind = senderKind(t)
+  return {
+    taskId: t.taskId,
+    sender: senderName(t),
+    ...(kind ? { senderKind: kind } : {}),
+    account,
+    contract: contractLines(t).slice(0, KEPT_CONTRACT_CHARS),
+    autonomy: t.autonomy,
+    expiresAt: validTime(t.expiresAt) ?? before?.expiresAt ?? new Date(now + OPEN_TASK_KEEP_MS).toISOString(),
+    started: before?.started ?? false,
+    queued: true,
+    waiting: false,
+    nudges: 0,
+  }
+}
+
+export const isOpenAt = (t: OpenTask, now: number): boolean => Date.parse(t.expiresAt) > now
+
+/** Open tasks as the plugin's store kept them; anything malformed or over is dropped. */
+export const parseOpenTasks = (v: unknown, now: number): OpenTask[] =>
+  (Array.isArray(v) ? v : []).flatMap((r): OpenTask[] => {
+    if (!isRecord(r)) return []
+    const { taskId, sender, account, contract, autonomy, expiresAt, started, queued, waiting, nudges } = r
+    if (typeof taskId !== 'string' || !taskId || typeof sender !== 'string' || typeof account !== 'string' || typeof contract !== 'string') return []
+    if (typeof autonomy !== 'string' || typeof expiresAt !== 'string' || !validTime(expiresAt)) return []
+    if (typeof started !== 'boolean' || typeof queued !== 'boolean' || typeof waiting !== 'boolean' || typeof nudges !== 'number') return []
+    const task: OpenTask = { taskId, sender, account, contract, autonomy, expiresAt, started, queued, waiting, nudges }
+    if (typeof r.senderKind === 'string' && r.senderKind) task.senderKind = r.senderKind
+    if (typeof r.turnId === 'string' && r.turnId) task.turnId = r.turnId
+    return isOpenAt(task, now) ? [task] : []
+  })
+
+/**
+ * The open task a reminder is for after a turn that moved none: its own turn has run,
+ * no prompt of it waits, it is not waiting for an answer and has reminders left. Oldest first.
+ */
+export const nudgeCandidate = (list: readonly OpenTask[], now: number, prefer?: string): OpenTask | undefined => {
+  const due = (t: OpenTask) => t.started && !t.queued && !t.waiting && t.nudges < MAX_NUDGES && isOpenAt(t, now)
+  return list.find(t => t.taskId === prefer && due(t)) ?? list.find(due)
 }
 
 /** How a rung call ended, in plain words (call_ended `status`). */

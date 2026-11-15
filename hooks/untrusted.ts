@@ -13,7 +13,10 @@ const FENCE_TAGS: readonly FenceTag[] = ['call-transcript', 'call-notes', 'call-
 // (`< /call-notes>`, `</ call-notes>`), any case, also as `&lt;` / `&#60;` / `&#x3c;`.
 const TAG_OPENER = new RegExp(`(?:<|&lt;|&#0*60;|&#x0*3c;)(\\s*/?\\s*)(${FENCE_TAGS.join('|')})`, 'gi')
 
-const defuse = (text: string): string => text.replace(TAG_OPENER, '‹$1$2')
+// And the plugin's own turn marks: a mark inside the text would make its turn look like a task's own.
+const MARK_OPENER = /\[(\s*call-(?:instruction|transcript)\s*:)/gi
+
+const defuse = (text: string): string => text.replace(TAG_OPENER, '‹$1$2').replace(MARK_OPENER, '‹$1')
 
 /** The text fenced as untrusted data from a call, one tag around it. */
 export const fenceUntrusted = (tag: FenceTag, text: string): string =>

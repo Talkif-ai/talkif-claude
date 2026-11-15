@@ -174,16 +174,54 @@ export type PluginSettings = {
   folders: string
   flowId: string
   debug: boolean
+  /** Away mode's ring options: after how long a waiting session rings when not set away, and for what. */
+  ringAfter: 'never' | '5' | '10' | '30'
+  ringOnQuestion: boolean
+  ringOnPermission: boolean
+  ringOnFinish: boolean
 }
 
 export type Advice = { option: keyof PluginSettings; now: string; suggested: string; kind: 'keep' | 'change' | 'optional'; reason: string }
 
+/** The ringAfter option's value for the minutes the ring rules hold (5, 10, 30; anything else is never). */
+export const ringAfterOption = (minutes: number | undefined): PluginSettings['ringAfter'] =>
+  minutes === 5 ? '5' : minutes === 10 ? '10' : minutes === 30 ? '30' : 'never'
+
+/**
+ * Away mode's ring options: which waits ring the person, and after how long. Where several
+ * people take calls, a session rings nobody by itself, so one line says that instead.
+ */
+function ringAdvice(s: PluginSettings, sharedRing: boolean | undefined): Advice[] {
+  if (sharedRing === true) {
+    return [{ option: 'ringAfter', now: s.ringAfter, suggested: s.ringAfter, kind: 'keep', reason: 'several people take calls in this Talkif account, so a session never rings anyone by itself here, whatever the ring options say; only call_me rings, the person picked with /talkif ring' }]
+  }
+  const away = '/talkif away [30m | 2h], or say it on a call; /talkif back ends it'
+  return [
+    s.ringAfter === 'never'
+      ? { option: 'ringAfter', now: 'never', suggested: 'never', kind: 'keep', reason: `a waiting session rings you only while you are set away (${away}), a minute after it starts to wait; 5, 10 or 30 also rings you after that many minutes when you are not set away` }
+      : { option: 'ringAfter', now: s.ringAfter, suggested: s.ringAfter, kind: 'keep', reason: `a session that waits ${s.ringAfter} minutes for you rings you also when you are not set away (while away: after a minute); never rings only while you are set away (${away})` },
+    s.ringOnQuestion
+      ? { option: 'ringOnQuestion', now: 'on', suggested: 'on', kind: 'keep', reason: 'a session that stops with a question or a decision only you can make rings you, and your answers come back to it' }
+      : { option: 'ringOnQuestion', now: 'off', suggested: 'on', kind: 'change', reason: 'off, a session that stops with a question while you are away waits in the terminal instead of ringing you' },
+    s.ringOnPermission
+      ? { option: 'ringOnPermission', now: 'on', suggested: 'on', kind: 'keep', reason: 'a session waiting at a permission prompt rings to tell you what it wants to do; it can only be allowed at your computer' }
+      : { option: 'ringOnPermission', now: 'off', suggested: 'on', kind: 'optional', reason: 'off, a session waiting at a permission prompt while you are away waits without telling you; on, it rings to say what it wants (allowing stays at your computer)' },
+    s.ringOnFinish
+      ? { option: 'ringOnFinish', now: 'on', suggested: 'on', kind: 'keep', reason: 'a turn of 10 minutes or more that finishes rings you with a one-line summary' }
+      : { option: 'ringOnFinish', now: 'off', suggested: 'on', kind: 'optional', reason: 'on, a turn of 10 minutes or more that finishes while you are away rings you with a one-line summary' },
+  ]
+}
+
 /**
  * What to keep or change, for a person who wants to be phoned by their sessions.
  * `flow`: the voice agent calls use now (picked when flowId is empty); `cwd`: this
- * session's folder; `organization`: whether the account is one (undefined: not known).
+ * session's folder; `organization`: whether the account is one; `sharedRing`: whether
+ * several people take calls in it (undefined: not known).
  */
-export function optionAdvice(s: PluginSettings, ctx: { flow: FlowRef | undefined; cwd: string | undefined; organization: boolean | undefined }): Advice[] {
+export function optionAdvice(
+  s: PluginSettings,
+  ctx: { flow: FlowRef | undefined; cwd: string | undefined; organization: boolean | undefined; sharedRing?: boolean },
+): Advice[] {
   const advice: Advice[] = []
   advice.push(
     s.callTasks === 'read-only'
@@ -221,6 +259,7 @@ export function optionAdvice(s: PluginSettings, ctx: { flow: FlowRef | undefined
   if (!s.flowId.trim() && ctx.flow) {
     advice.push({ option: 'flowId', now: '(empty)', suggested: ctx.flow.id, kind: 'optional', reason: `pins "${ctx.flow.name}", the agent calls run on now, so publishing another flow with a Connectors node does not change it` })
   }
+  advice.push(...ringAdvice(s, ctx.sharedRing))
   if (s.debug) {
     advice.push({ option: 'debug', now: 'on', suggested: 'off', kind: 'change', reason: 'it records this session\'s Talkif traffic; only needed while troubleshooting' })
   }
