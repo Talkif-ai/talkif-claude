@@ -189,7 +189,8 @@ const OUTCOMES: Record<string, string> = {
 export const outcomeWords = (t: TaskCard): string => {
   const state = t.outcome ?? t.state
   if (state === 'expired' && t.reason === 'no_answer') return 'not taken in time'
-  return OUTCOMES[state] ?? state
+  // A state this version does not know, as plain words only: it is read by the turn it starts.
+  return OUTCOMES[state] ?? (state.toLowerCase().replace(/[^a-z]+/g, ' ').trim().slice(0, 40) || 'over')
 }
 
 // ---- Who sent a task, as its prompts name them ----
@@ -285,14 +286,18 @@ export type OpenTask = {
   expiresAt: string
   /** A turn of it has run (the offer, an answer, a revise, a reminder). */
   started: boolean
-  /** A prompt of it is submitted and its turn has not started yet. */
-  queued: boolean
+  /** Prompts of it submitted whose turn has not started yet. */
+  queued: number
   /** It asked with talkif_question and waits for the answer. */
   waiting: boolean
   /** Reminders since the last offer, answer or revise. */
   nudges: number
   /** The turn of it running now: kept across a reload, so its end is still known as its own. */
   turnId?: string
+  /** The developer typed into a turn of it: no more reminders and nothing sent by itself; the task tools still move it. */
+  takenOver?: true
+  /** What its own turn left, not taken yet by Talkif (offline, busy): sent again until it is. */
+  report?: { kind: 'question' | 'done' | 'blocked'; text: string; tries: number }
 }
 
 const validTime = (iso: string | undefined): string | undefined => (iso !== undefined && Number.isFinite(Date.parse(iso)) ? iso : undefined)
@@ -309,7 +314,8 @@ export const openTaskOf = (t: TaskCard, account: string, now: number, before?: O
     autonomy: t.autonomy,
     expiresAt: validTime(t.expiresAt) ?? before?.expiresAt ?? new Date(now + OPEN_TASK_KEEP_MS).toISOString(),
     started: before?.started ?? false,
-    queued: true,
+    // A prompt of it still on its way (a reminder) is counted too.
+    queued: (before?.queued ?? 0) + 1,
     waiting: false,
     nudges: 0,
   }
@@ -324,21 +330,27 @@ export const parseOpenTasks = (v: unknown, now: number): OpenTask[] =>
     const { taskId, sender, account, contract, autonomy, expiresAt, started, queued, waiting, nudges } = r
     if (typeof taskId !== 'string' || !taskId || typeof sender !== 'string' || typeof account !== 'string' || typeof contract !== 'string') return []
     if (typeof autonomy !== 'string' || typeof expiresAt !== 'string' || !validTime(expiresAt)) return []
-    if (typeof started !== 'boolean' || typeof queued !== 'boolean' || typeof waiting !== 'boolean' || typeof nudges !== 'number') return []
-    const task: OpenTask = { taskId, sender, account, contract, autonomy, expiresAt, started, queued, waiting, nudges }
+    if (typeof started !== 'boolean' || typeof queued !== 'number' || typeof waiting !== 'boolean' || typeof nudges !== 'number') return []
+    const task: OpenTask = { taskId, sender, account, contract, autonomy, expiresAt, started, queued: Math.max(0, queued), waiting, nudges }
     if (typeof r.senderKind === 'string' && r.senderKind) task.senderKind = r.senderKind
     if (typeof r.turnId === 'string' && r.turnId) task.turnId = r.turnId
+    if (r.takenOver === true) task.takenOver = true
+    const report = isRecord(r.report) ? r.report : undefined
+    if (report && (report.kind === 'question' || report.kind === 'done' || report.kind === 'blocked') && typeof report.text === 'string' && typeof report.tries === 'number') {
+      task.report = { kind: report.kind, text: report.text, tries: report.tries }
+    }
     return isOpenAt(task, now) ? [task] : []
   })
 
 /**
- * The open task a reminder is for after a turn that moved none: its own turn has run,
- * no prompt of it waits, it is not waiting for an answer and has reminders left. Oldest first.
+ * Whether an open task may be reminded now: no prompt of it waits, it is not waiting for an
+ * answer, not taken over by the developer, nothing of it waits to be sent, and it has reminders left.
  */
-export const nudgeCandidate = (list: readonly OpenTask[], now: number, prefer?: string): OpenTask | undefined => {
-  const due = (t: OpenTask) => t.started && !t.queued && !t.waiting && t.nudges < MAX_NUDGES && isOpenAt(t, now)
-  return list.find(t => t.taskId === prefer && due(t)) ?? list.find(due)
-}
+export const mayRemind = (t: OpenTask, now: number): boolean =>
+  t.queued === 0 && !t.waiting && !t.takenOver && !t.report && t.nudges < MAX_NUDGES && isOpenAt(t, now)
+
+/** The open task a reminder is for after a turn that moved none: one whose own turn has run and may be reminded. Oldest first. */
+export const nudgeCandidate = (list: readonly OpenTask[], now: number): OpenTask | undefined => list.find(t => t.started && mayRemind(t, now))
 
 /** How a rung call ended, in plain words (call_ended `status`). */
 export const callOutcomeWords = (status: string | undefined): string => {
