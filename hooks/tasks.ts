@@ -102,7 +102,7 @@ export type TaskCard = {
   role: 'sender' | 'receiver'
   state: string
   with?: string
-  /** What the other side is (a voice assistant, a coding session, a bot), when Talkif says it. */
+  /** What the other side is (`coding_session`, `cloud_agent`, …), when Talkif says it; older Talkif does not. */
   withKind?: string
   /** ISO time Talkif ends the task. */
   expiresAt?: string
@@ -203,8 +203,29 @@ const plainName = (raw: string | undefined, max: number): string | undefined => 
 /** The other side's name on a card, safe to quote in a prompt line. */
 export const senderName = (t: { with?: string }): string => plainName(t.with, 60) ?? 'another agent'
 
-/** What the other side is ("voice assistant", "coding session"), when the card says it. */
-export const senderKind = (t: { withKind?: string }): string | undefined => plainName(t.withKind?.replace(/[_-]+/g, ' '), 30)?.toLowerCase()
+/**
+ * What the other side is, as Talkif names it (`coding_session`, `cloud_agent` or another
+ * connector kind: lowercase letters, digits and `_`), when the card says it; older Talkif does not.
+ */
+export const senderKind = (t: { withKind?: string }): string | undefined => {
+  const kind = (t.withKind ?? '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 40)
+  return /[a-z]/.test(kind) ? kind : undefined
+}
+
+// The kinds Talkif names, in plain words; any other is said from its own words.
+const KIND_WORDS: Record<string, string> = {
+  coding_session: 'a coding session',
+  coding: 'a coding session',
+  cloud_agent: 'a cloud agent',
+}
+
+/** A kind in plain words with its article: `cloud_agent` → "a cloud agent", `assistant` → "an assistant". */
+export const kindWords = (kind: string): string => {
+  const known = KIND_WORDS[kind]
+  if (known) return known
+  const words = kind.replace(/_+/g, ' ').trim()
+  return `${/^[aeiou]/.test(words) ? 'an' : 'a'} ${words}`
+}
 
 /**
  * A short id for the first line of a task's prompts. The end of the id, not its start:
@@ -221,7 +242,7 @@ export const NOBODY_HERE = 'Whoever asked for it is not at this terminal; nobody
 export const contractTaskHeader = (t: { taskId: string; with?: string; withKind?: string }, news?: string): string => {
   const kind = senderKind(t)
   return [
-    `TALKIF TASK ${shortTaskId(t.taskId)} from "${senderName(t)}"${kind ? ` (${kind})` : ''}, another agent, through Talkif${news ? `: ${news}` : ''}.`,
+    `TALKIF TASK ${shortTaskId(t.taskId)} from "${senderName(t)}"${kind ? ` (${kindWords(kind)})` : ', another agent,'} through Talkif${news ? `: ${news}` : ''}.`,
     NOBODY_HERE,
     'Ask with talkif_question; deliver with talkif_submit. That is the only way it reaches them.',
   ].join(' ')
