@@ -28,6 +28,8 @@ import {
 import type { Presence, RingRules } from './away'
 import { LEAD_CONTEXT, LEAD_ENDED_CONTEXT, LEAD_USAGE, leadLine, leadRefusal, parseLead, parseLeadArg } from './lead'
 import { redactBody } from './secrets'
+import { CURL_ARGV, STREAM_FAILURES_BEFORE_POLL, StreamReader, afterStream, curlConfig, wasHealthy } from './stream'
+import type { StreamEnd } from './stream'
 import { fenceUntrusted, untrustedNote } from './untrusted'
 import {
   FLOW_STEP,
@@ -156,7 +158,7 @@ const TASK_TOOL_NAMES: ReadonlySet<string> = new Set(TASK_TOOLS.map(t => taskToo
 const PEERS_REFRESH_MS = 10 * 60_000
 // Sent as the User-Agent on every request to the backend and the bridge. Kept equal
 // to .claude-plugin/plugin.json's version: bump both together.
-export const VERSION = '0.31.4'
+export const VERSION = '0.32.0'
 const USER_AGENT = `talkif-claude/${VERSION}`
 // Debug pane: this session's bridge traffic, newest last (`/talkif traffic`; recorded only with the debug option).
 const TRAFFIC_PANE = 'talkif-traffic'
@@ -281,6 +283,8 @@ let optApiUrl = ''
 let optSharing: Sharing = 'ask'
 let sessionSharing: Sharing | undefined
 let optFlowId = ''
+// How turns reach this session: 'auto' streams where it can (curl) and long-polls elsewhere.
+let optTransport: 'auto' | 'long-poll' = 'auto'
 let optFolders = ''
 
 // Setup that is wrong (no key, no flow): shown by /talkif, and once as a notice.
@@ -684,7 +688,30 @@ type BridgeTurn = { requestId: string; callId: string; messages: unknown[]; kind
 // received: the last call_ended item got, confirmed on the next poll (the server sends it until then).
 // callEnds: the server said it sends call outcomes (false on an older server: no transcripts arrive).
 // lead: this session is the developer's lead in this account (undefined: that Talkif does not know leads).
-type Bridge = { name: string; key: string; session: string | undefined; failures: number; accountName?: string; timer?: Timer; received?: string; callEnds?: boolean; lead?: boolean }
+// streams: the server said it pushes turns over a live stream (register answer `stream`).
+// transport: how turns arrive now: 'stream' while a live stream is open, 'poll' while long-polling.
+// streamFailures: quick stream failures in a row; streamOff: no stream until then, and why.
+// streamCooldowns: waits after failing streams in a row (each longer; reset by a stream that works).
+// streamOpened: a stream opened since the session last registered (a 404 then means it expired).
+// quietOpen: the next open follows the minute's routine reconnect: not worth a traffic line.
+type Bridge = {
+  name: string
+  key: string
+  session: string | undefined
+  failures: number
+  accountName?: string
+  timer?: Timer
+  received?: string
+  callEnds?: boolean
+  lead?: boolean
+  streams?: boolean
+  transport?: 'stream' | 'poll'
+  streamFailures: number
+  streamOff?: { until: number; why: string }
+  streamCooldowns: number
+  streamOpened?: boolean
+  quietOpen?: boolean
+}
 const labelOf = (b: Bridge): string => accountLabel(b.name, b.accountName)
 const bridges: Bridge[] = []
 const personalBridge = (): Bridge | undefined => bridges.find(b => b.name === 'personal')
@@ -1014,6 +1041,8 @@ async function bridgeRegister($: EngineInterface, bridge: Bridge): Promise<boole
   }
   bridge.callEnds = sendsEnds
   bridge.lead = parseLead(body)
+  bridge.streams = isRecord(body) && body.stream === true
+  bridge.streamOpened = false
   if (isRecord(body)) await applyPresence($, parsePresence(body.presence))
   // Registered: access is back, whatever refused it before.
   if (bridge.session) resume($, `bridge:${bridge.name}`)
@@ -1939,6 +1968,7 @@ async function agentSetup($: EngineInterface): Promise<string> {
       ringOnQuestion: rules.ringFor.question,
       ringOnPermission: rules.ringFor.permission,
       ringOnFinish: rules.ringFor.finish,
+      transport: optTransport,
     },
     { flow: optFlowId.trim() ? undefined : setup.flow, cwd: sessionCwd, organization: anyOrganization(setup.answers), ...(people ? { sharedRing: people.length > 1 } : {}) },
   )
@@ -2174,6 +2204,17 @@ async function bridgePoll($: EngineInterface, bridge: Bridge) {
       return
     }
     if (!bridge.session && !(await bridgeRegister($, bridge))) throw new Error('register failed')
+    if (bridge.session && (await noStreamReason($, bridge)) === undefined) {
+      // The live stream: it runs until it ends, then schedules the next round itself. No poll
+      // runs meanwhile (nothing else schedules this bridge), so turns never come two ways.
+      void bridgeStream($, bridge, bridge.session).catch(err => {
+        // Never a bridge left without a next round.
+        void trace($, 'error', bridge.name, 'stream', String(err))
+        schedule($, bridge, 1_000)
+      })
+      return
+    }
+    bridge.transport = 'poll'
     const confirming = bridge.received
     const res = await bridgeFetch($, bridge, `/${bridge.session}/next${confirming ? `?received=${encodeURIComponent(confirming)}` : ''}`, 'GET')
     const refused = refusal(res.status, res.text)
@@ -2185,32 +2226,7 @@ async function bridgePoll($: EngineInterface, bridge: Bridge) {
       bridge.session = undefined // expired: register again next round
       if (bridge.lead) bridge.lead = false // and Talkif ended its lead
     } else if (res.status === 200) {
-      const body: unknown = JSON.parse(res.text)
-      if (isRecord(body) && body.kind === 'call_ended' && typeof body.requestId === 'string') {
-        // Confirmed on the next poll; a repeat (the confirmation was lost) is dropped by id.
-        bridge.received = body.requestId
-      }
-      if (isRecord(body) && typeof body.requestId === 'string' && typeof body.callId === 'string' && Array.isArray(body.messages)) {
-        // Not awaited: the next poll runs while this is answered, so a second
-        // question is acknowledged at once instead of waiting behind a slow one.
-        void bridgeAnswer($, bridge, {
-          requestId: body.requestId,
-          callId: body.callId,
-          messages: body.messages,
-          kind: typeof body.kind === 'string' ? body.kind : 'turn',
-          question: typeof body.question === 'string' ? body.question : undefined,
-          intent: typeof body.intent === 'string' ? body.intent : undefined,
-          notify: typeof body.notify === 'string' ? body.notify : undefined,
-          callerName: typeof body.callerName === 'string' ? body.callerName : undefined,
-          fromSession: typeof body.fromSession === 'string' ? body.fromSession : undefined,
-          status: typeof body.status === 'string' ? body.status : undefined,
-          endReason: typeof body.endReason === 'string' ? body.endReason : undefined,
-          transcript: typeof body.transcript === 'string' ? body.transcript : undefined,
-          task: parseTaskCard(body.task),
-          presence: parsePresence(body.presence),
-          lead: parseLead(body),
-        }).catch(err => $.ui.log(`bridge (${bridge.name}): answering failed: ${String(err)}`))
-      }
+      takeTurn($, bridge, JSON.parse(res.text), 'poll')
     } else if (res.status !== 204) {
       throw new Error(`next → ${res.status}`)
     }
@@ -2234,10 +2250,204 @@ async function bridgePoll($: EngineInterface, bridge: Bridge) {
   }
 }
 
+// A turn from Talkif, the same whichever way it came (a poll's answer, a stream's frame).
+// Not awaited: the next turn is read while this one is answered, so a second question is
+// acknowledged at once instead of waiting behind a slow one. Each live turn leaves Talkif's
+// queue once, by one transport; a call outcome can come again until it is confirmed, and
+// bridgeAnswer drops a repeat by its id.
+function takeTurn($: EngineInterface, bridge: Bridge, body: unknown, via: 'poll' | 'stream') {
+  if (!isRecord(body)) return
+  if (body.kind === 'call_ended' && typeof body.requestId === 'string') {
+    // A poll confirms it on the next poll; a stream confirms it at once.
+    if (via === 'poll') bridge.received = body.requestId
+    else void confirmReceived($, bridge, body.requestId)
+  }
+  if (typeof body.requestId !== 'string' || typeof body.callId !== 'string' || !Array.isArray(body.messages)) return
+  void bridgeAnswer($, bridge, {
+    requestId: body.requestId,
+    callId: body.callId,
+    messages: body.messages,
+    kind: typeof body.kind === 'string' ? body.kind : 'turn',
+    question: typeof body.question === 'string' ? body.question : undefined,
+    intent: typeof body.intent === 'string' ? body.intent : undefined,
+    notify: typeof body.notify === 'string' ? body.notify : undefined,
+    callerName: typeof body.callerName === 'string' ? body.callerName : undefined,
+    fromSession: typeof body.fromSession === 'string' ? body.fromSession : undefined,
+    status: typeof body.status === 'string' ? body.status : undefined,
+    endReason: typeof body.endReason === 'string' ? body.endReason : undefined,
+    transcript: typeof body.transcript === 'string' ? body.transcript : undefined,
+    task: parseTaskCard(body.task),
+    presence: parsePresence(body.presence),
+    lead: parseLead(body),
+  }).catch(err => $.ui.log(`bridge (${bridge.name}): answering failed: ${String(err)}`))
+}
+
+// ---- The live stream (see stream.ts): curl holds it, Talkif pushes each turn as it comes ----
+
+// Why this bridge long-polls now instead of streaming; undefined when it can stream.
+async function noStreamReason($: EngineInterface, bridge: Bridge): Promise<string | undefined> {
+  if (optTransport === 'long-poll') return 'set to long-poll in the plugin options'
+  if (!bridge.streams) return 'this Talkif server does not push turns yet'
+  // Also a surface without processes, or no curl: the first try failed to start it (holdStream).
+  if (bridge.streamOff && (await $.clock.now()) < bridge.streamOff.until) return bridge.streamOff.why
+  return undefined
+}
+
+// How this bridge gets its turns, for /talkif and talkif_setup.
+async function connectionText($: EngineInterface, bridge: Bridge): Promise<string> {
+  if (bridge.transport === 'stream') return 'live stream'
+  const why = await noStreamReason($, bridge)
+  if (why) return `long-poll (${why})`
+  return 'opening the live stream'
+}
+
+async function bridgeStream($: EngineInterface, bridge: Bridge, session: string) {
+  const loop: Loop = `bridge:${bridge.name}`
+  let end: StreamEnd
+  try {
+    end = await holdStream($, bridge, session)
+  } catch (err) {
+    end = { kind: 'dropped', opened: false, livedMs: 0, detail: String(err) }
+  }
+  bridge.transport = undefined
+  // The minute's reconnect is routine: no traffic line for it or for the open that follows.
+  const routine = end.kind === 'closed' && end.reason === 'reconnect'
+  bridge.quietOpen = routine
+  if (!routine) await trace($, end.kind === 'dropped' || end.kind === 'unstartable' ? 'error' : 'info', bridge.name, 'stream', streamEndText(end))
+  if (end.kind === 'answered') {
+    const refused = refusal(end.status, end.answer)
+    if (refused) {
+      pause($, loop, refused.problem)
+      schedule($, bridge, REFUSED_RETRY_MS)
+      return
+    }
+  }
+  const next = afterStream(end, { failures: bridge.streamFailures, cooldowns: bridge.streamCooldowns, openedSinceRegister: bridge.streamOpened === true }, Math.random())
+  if (next.then === 'register') {
+    // Expired or ended on the server: register again next round (and Talkif ended its lead).
+    if (bridge.session === session) {
+      bridge.session = undefined
+      if (bridge.lead) bridge.lead = false
+    }
+    schedule($, bridge, 0)
+  } else if (next.then === 'poll') {
+    if (next.failing) {
+      // After the wait, one try: failing again sends it back to the long-poll for longer.
+      bridge.streamFailures = STREAM_FAILURES_BEFORE_POLL - 1
+      bridge.streamCooldowns += 1
+    } else {
+      bridge.streamFailures = 0
+    }
+    bridge.streamOff = { until: next.offMs === Infinity ? Infinity : (await $.clock.now()) + next.offMs, why: next.why }
+    await trace($, 'info', bridge.name, 'stream', `long-polling instead: ${next.why}`)
+    schedule($, bridge, 0)
+  } else {
+    if (next.failed) bridge.streamFailures += 1
+    else if (wasHealthy(end)) {
+      bridge.streamFailures = 0
+      bridge.streamCooldowns = 0
+    }
+    // Not even connected: as far as the status line goes, the same as a failed poll.
+    if (end.kind === 'dropped' && !end.opened) bridge.failures += 1
+    schedule($, bridge, next.afterMs)
+  }
+  await refreshStatus($)
+}
+
+const streamEndText = (end: StreamEnd): string => {
+  switch (end.kind) {
+    case 'unstartable':
+      return `could not start: ${end.detail}`
+    case 'answered':
+      return `Talkif answered ${end.status} instead of a stream`
+    case 'closed':
+      return `closed by Talkif (${end.reason}) after ${Math.round(end.livedMs / 1000)} s`
+    case 'left':
+      return 'closed: this session left'
+    case 'dropped':
+      return `${end.opened ? `dropped after ${Math.round(end.livedMs / 1000)} s` : 'could not connect'}: ${end.detail}`
+  }
+}
+
+// Holds the bridge's live stream until it ends. curl reads it (the URL and key reach it on
+// stdin, never in its arguments); each frame goes to the same handler as a poll's answer.
+// Leaving the loop ends curl, and so does unloading the plugin.
+async function holdStream($: EngineInterface, bridge: Bridge, session: string): Promise<StreamEnd> {
+  const { url } = await loadEnv($)
+  const config = curlConfig(`${url}/api/v1/session-bridge/${encodeURIComponent(session)}/stream`, bridge.key, USER_AGENT)
+  if (!config) return { kind: 'unstartable', detail: 'the API URL or key has characters curl\'s config cannot take' }
+  const startedAt = await $.clock.now()
+  const lived = async () => (await $.clock.now()) - startedAt
+  const reader = new StreamReader()
+  let opened = false
+  let pulled = false
+  let stderr = ''
+  let exited: Promise<string> | undefined
+  try {
+    // Inside the try: where the surface has no processes (the desktop and mobile apps) the
+    // call itself fails, and where curl is missing the first pull does; both are unstartable.
+    const child = $.process.spawn({ argv: CURL_ARGV, input: config })
+    exited = child.result.then(r => (r.code !== null ? `curl exited ${r.code}` : `curl ended by ${r.signal ?? 'a signal'}`)).catch(() => 'curl ended')
+    for await (const { stream, text } of child) {
+      pulled = true
+      if (stream === 'stderr') {
+        stderr = (stderr + text).slice(-300)
+        continue
+      }
+      for (const frame of reader.feed(text)) {
+        if (frame.type === 'session.registered') {
+          opened = true
+          await streamOpened($, bridge)
+        } else if (frame.type === 'session.closed') {
+          return { kind: 'closed', reason: isRecord(frame.data) && typeof frame.data.reason === 'string' ? frame.data.reason : 'unknown', livedMs: await lived() }
+        } else if (frame.type !== 'ping') {
+          takeTurn($, bridge, frame.data, 'stream')
+        }
+      }
+      // Left meanwhile (/talkif off, expired, the session ending here): stop reading.
+      if (bridge.session !== session) return { kind: 'left' }
+    }
+  } catch (err) {
+    if (!pulled) return { kind: 'unstartable', detail: clip(String(err).replace(/^HooksError: /, '').replace(/^talkif: /, ''), 120) }
+    return { kind: 'dropped', opened, livedMs: await lived(), detail: clip(String(err), 160) }
+  }
+  if (reader.status !== undefined && reader.status !== 200) return { kind: 'answered', status: reader.status, answer: reader.answer }
+  const exit = (await exited) ?? 'curl ended'
+  return { kind: 'dropped', opened, livedMs: await lived(), detail: clip(`${exit}${stderr.trim() ? `: ${stderr.trim()}` : ''}`, 200) }
+}
+
+async function streamOpened($: EngineInterface, bridge: Bridge) {
+  bridge.transport = 'stream'
+  bridge.streamOpened = true
+  bridge.failures = 0
+  resume($, `bridge:${bridge.name}`)
+  // A call outcome the last poll got, not yet confirmed: confirmed here, no poll follows.
+  if (bridge.received) {
+    const id = bridge.received
+    bridge.received = undefined
+    void confirmReceived($, bridge, id)
+  }
+  if (!bridge.quietOpen) await trace($, 'info', bridge.name, 'stream', 'live stream open')
+  bridge.quietOpen = false
+  await refreshStatus($)
+}
+
+// A call outcome that came on the stream: Talkif sends it again on the next stream until then.
+async function confirmReceived($: EngineInterface, bridge: Bridge, requestId: string) {
+  const session = bridge.session
+  if (!session) return
+  try {
+    const res = await bridgeFetch($, bridge, `/${session}/received`, 'POST', { requestId })
+    await trace($, res.ok ? 'out' : 'error', bridge.name, 'received', `${res.status} · ${requestId}`)
+  } catch (err) {
+    await trace($, 'error', bridge.name, 'received', `${String(err)}; it comes again on the next stream`)
+  }
+}
+
 async function bridgeStart($: EngineInterface) {
   const { bridges: keys } = await loadCredentials($)
   for (const { name, key } of keys) {
-    const bridge: Bridge = { name, key, session: undefined, failures: 0 }
+    const bridge: Bridge = { name, key, session: undefined, failures: 0, streamFailures: 0, streamCooldowns: 0 }
     bridges.push(bridge)
     schedule($, bridge, 0)
   }
@@ -2870,7 +3080,14 @@ async function currentState($: EngineInterface): Promise<TalkifState> {
     flowName: flow?.name,
     away: awayNow(),
     lead: leadNow(),
+    connection: await connectionOf($),
   }
+}
+
+// The connected bridge's transport (the personal account's first), once one is connected.
+async function connectionOf($: EngineInterface): Promise<string | undefined> {
+  const bridge = connectedBridge()
+  return bridge ? connectionText($, bridge) : undefined
 }
 
 let shownStatus: string | undefined
@@ -2892,6 +3109,7 @@ export const register: Register = (on, options) => {
   optSharing = parseSharing(options.sharing) ?? 'ask'
   optFlowId = typeof options.flowId === 'string' ? options.flowId : ''
   optFolders = typeof options.folders === 'string' ? options.folders : ''
+  optTransport = options.transport === 'long-poll' ? 'long-poll' : 'auto'
   debugMode = options.debug === true
   acceptParallel = options.parallel === true
   callbackOn = options.callback !== false

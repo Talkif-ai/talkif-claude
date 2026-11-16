@@ -179,6 +179,8 @@ export type PluginSettings = {
   ringOnQuestion: boolean
   ringOnPermission: boolean
   ringOnFinish: boolean
+  /** How turns reach the session: a live stream where it can, else the long-poll; or always the long-poll. */
+  transport: 'auto' | 'long-poll'
 }
 
 export type Advice = { option: keyof PluginSettings; now: string; suggested: string; kind: 'keep' | 'change' | 'optional'; reason: string }
@@ -260,6 +262,9 @@ export function optionAdvice(
     advice.push({ option: 'flowId', now: '(empty)', suggested: ctx.flow.id, kind: 'optional', reason: `pins "${ctx.flow.name}", the agent calls run on now, so publishing another flow with a Connectors node does not change it` })
   }
   advice.push(...ringAdvice(s, ctx.sharedRing))
+  if (s.transport === 'long-poll') {
+    advice.push({ option: 'transport', now: 'long-poll', suggested: 'auto', kind: 'change', reason: 'long-poll asks Talkif for turns with a new request every 20 seconds; auto lets Talkif push them over a live stream where this computer can hold one, and long-polls where it cannot' })
+  }
   if (s.debug) {
     advice.push({ option: 'debug', now: 'on', suggested: 'off', kind: 'change', reason: 'it records this session\'s Talkif traffic; only needed while troubleshooting' })
   }
