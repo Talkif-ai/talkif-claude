@@ -282,6 +282,8 @@ export type TalkifState = {
   away?: boolean
   /** This session is the developer's lead: it answers for all of their sessions. */
   lead?: boolean
+  /** How turns reach this session now: the live stream, or the long-poll and why. */
+  connection?: string
 }
 
 const sentence = (text: string): string => {
@@ -316,7 +318,8 @@ export function cmLines(state: TalkifState): string {
   const head = state.onCall ? 'On a call.' : 'On.'
   const away = state.away ? ['You are set as away: a waiting session rings you. /talkif back when you are at the terminal.'] : []
   const lead = state.lead ? ['This session is your lead: it answers for all of your sessions. /talkif lead off to stop.'] : []
-  return [`${head} This session can be reached through ${accountsText(state.registered)}.`, call, ...away, ...lead, MORE].join('\n')
+  const connection = state.connection ? [`Connection: ${state.connection}.`] : []
+  return [`${head} This session can be reached through ${accountsText(state.registered)}.`, call, ...away, ...lead, ...connection, MORE].join('\n')
 }
 
 /** /talkif help: the common commands first; two columns when the terminal is wide enough, else stacked. */

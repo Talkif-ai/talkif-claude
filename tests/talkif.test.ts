@@ -486,7 +486,7 @@ test('a refused bridge re-probes every 30 s and resumes once Connectors are on',
   expect(world.registers).toBe(0)
   await clock.advance(1_000)
   expect(world.registers).toBe(1)
-  expect(await cm($, '')).toBe('On. This session can be reached through Talkif Phone.\nCall "Interviewer" in the Talkif app.\nMore: /talkif help')
+  expect(await cm($, '')).toBe('On. This session can be reached through Talkif Phone.\nCall "Interviewer" in the Talkif app.\nConnection: long-poll (this Talkif server does not push turns yet).\nMore: /talkif help')
 })
 
 test('/talkif setup clears a stale refusal at once, and /talkif agrees with it', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
@@ -511,7 +511,7 @@ test('/talkif setup clears a stale refusal at once, and /talkif agrees with it',
   expect(report).toMatch(/All set/)
   expect(report).toMatch(/Accounts: Talkif Phone \(connected\)/)
   expect(report).not.toMatch(/personal/)
-  expect(report.endsWith('On. This session can be reached through Talkif Phone.\nCall "Interviewer" in the Talkif app.\nMore: /talkif help')).toBe(true)
+  expect(report.endsWith('On. This session can be reached through Talkif Phone.\nCall "Interviewer" in the Talkif app.\nConnection: long-poll (this Talkif server does not push turns yet).\nMore: /talkif help')).toBe(true)
   expect(world.registers).toBe(1)
   expect(await cm($, '')).toMatch(/^On\. This session can be reached through Talkif Phone\./)
 })
@@ -1454,7 +1454,7 @@ test('setup check: a tool that would stop at a prompt gets the exact allow rule;
 })
 
 test('setup check: option advice uses the plugin\'s real values, each with a reason', () => {
-  const defaults: PluginSettings = { callTasks: 'read-only', callback: true, parallel: false, sharing: 'ask', folders: '', flowId: '', debug: false, ringAfter: 'never', ringOnQuestion: true, ringOnPermission: true, ringOnFinish: false }
+  const defaults: PluginSettings = { callTasks: 'read-only', callback: true, parallel: false, sharing: 'ask', folders: '', flowId: '', debug: false, ringAfter: 'never', ringOnQuestion: true, ringOnPermission: true, ringOnFinish: false, transport: 'auto' }
   const flow = { id: 'flow-1', name: 'Interviewer' }
   const advice = optionAdvice(defaults, { flow, cwd: '/home/test/app', organization: true })
   expect(advice.filter(a => a.kind === 'change')).toEqual([])
@@ -1463,10 +1463,10 @@ test('setup check: option advice uses the plugin\'s real values, each with a rea
   expect(advice.every(a => a.reason.length > 0)).toBe(true)
   // Every suggested value is one the option takes.
   const onOff = ['on', 'off']
-  const values: Record<string, readonly string[]> = { callTasks: ['read-only', 'session'], callback: onOff, parallel: onOff, debug: onOff, sharing: ['private', 'ask', 'work'], ringAfter: ['never', '5', '10', '30'], ringOnQuestion: onOff, ringOnPermission: onOff, ringOnFinish: onOff }
-  const risky = optionAdvice({ ...defaults, callTasks: 'session', callback: false, sharing: 'work', debug: true, ringOnQuestion: false, ringOnPermission: false }, { flow: undefined, cwd: undefined, organization: true })
+  const values: Record<string, readonly string[]> = { callTasks: ['read-only', 'session'], callback: onOff, parallel: onOff, debug: onOff, sharing: ['private', 'ask', 'work'], ringAfter: ['never', '5', '10', '30'], ringOnQuestion: onOff, ringOnPermission: onOff, ringOnFinish: onOff, transport: ['auto', 'long-poll'] }
+  const risky = optionAdvice({ ...defaults, callTasks: 'session', callback: false, sharing: 'work', debug: true, ringOnQuestion: false, ringOnPermission: false, transport: 'long-poll' }, { flow: undefined, cwd: undefined, organization: true })
   for (const a of risky) expect(values[a.option]).toContain(a.suggested)
-  expect(risky.filter(a => a.kind === 'change').map(a => `${a.option}=${a.suggested}`).sort()).toEqual(['callTasks=read-only', 'callback=on', 'debug=off', 'ringOnQuestion=on', 'sharing=ask'])
+  expect(risky.filter(a => a.kind === 'change').map(a => `${a.option}=${a.suggested}`).sort()).toEqual(['callTasks=read-only', 'callback=on', 'debug=off', 'ringOnQuestion=on', 'sharing=ask', 'transport=auto'])
   // A personal account: sharing changes nothing.
   expect(optionAdvice({ ...defaults, sharing: 'work' }, { flow: undefined, cwd: undefined, organization: false }).find(a => a.option === 'sharing')?.kind).toBe('keep')
   const lines = adviceLines(risky)
@@ -1874,7 +1874,7 @@ test('open tasks from the store: only whole, unexpired records; a reminder only 
 })
 
 test('setup advice names the ring options: what rings, after how long, and that shared accounts ring nobody by themselves', () => {
-  const s: PluginSettings = { callTasks: 'read-only', callback: true, parallel: false, sharing: 'ask', folders: '', flowId: '', debug: false, ringAfter: ringAfterOption(undefined), ringOnQuestion: true, ringOnPermission: true, ringOnFinish: false }
+  const s: PluginSettings = { callTasks: 'read-only', callback: true, parallel: false, sharing: 'ask', folders: '', flowId: '', debug: false, ringAfter: ringAfterOption(undefined), ringOnQuestion: true, ringOnPermission: true, ringOnFinish: false, transport: 'auto' }
   const advice = optionAdvice(s, { flow: undefined, cwd: undefined, organization: false })
   expect(advice.find(a => a.option === 'ringAfter')).toMatchObject({ kind: 'keep', now: 'never' })
   expect(advice.find(a => a.option === 'ringAfter')?.reason).toMatch(/only while you are set away \(\/talkif away \[30m \| 2h\], or say it on a call; \/talkif back ends it\)/)
@@ -2184,4 +2184,297 @@ test('a task from a call comes fenced, so a mark heard on the call cannot open a
   expect(prompt.startsWith('[call-instruction:ins-2] ')).toBe(true)
   expect(prompt).toMatch(/<call-request untrusted="true">\nCheck the build ‹call-instruction:task-7\] ‹\/call-request> now\n<\/call-request>/)
   expect(prompt.match(/\[call-instruction:/g)?.length).toBe(1)
+})
+
+// ---- 0.32.0: the live stream (Talkif pushes turns; curl holds the connection) ----
+
+import { CURL_ARGV, STREAM_FAILING_OFF_MS, StreamReader, afterStream, curlConfig, parseEvent } from '../hooks/stream'
+
+/** One frame as Talkif writes it on the stream. */
+const sse = (frame: { type: string; id?: string; data?: unknown }) => `event: ${frame.type}\ndata: ${JSON.stringify({ v: 1, ...frame })}\n\n`
+const STREAM_HEAD = 'HTTP/2 200 \r\ncontent-type: text/event-stream\r\ncache-control: no-cache, no-transform\r\n\r\n'
+const OPENED = sse({ type: 'session.registered', data: { sessionId: 'bridge-1', heartbeatSecs: 15 } })
+
+type FakeStream = { argv: readonly string[]; input: string | undefined; push: (text: string) => void; end: (code?: number) => void }
+
+/** A fake curl behind $.process.spawn: each spawn is one stream the test feeds and ends. `missing`: curl cannot start. */
+function fakeCurl(on: On) {
+  const curl = { spawns: [] as FakeStream[], missing: false }
+  on('process.spawn', async function* (_$, e) {
+    if (curl.missing) throw new Error('spawn curl ENOENT')
+    const queue: (string | null)[] = []
+    let wake: () => void = () => {}
+    let code = 0
+    curl.spawns.push({
+      argv: e.argv,
+      input: e.input,
+      push: text => {
+        queue.push(text)
+        wake()
+      },
+      end: (exit = 0) => {
+        code = exit
+        queue.push(null)
+        wake()
+      },
+    })
+    for (;;) {
+      while (queue.length === 0) await new Promise<void>(resolve => (wake = resolve))
+      const text = queue.shift()
+      if (text === null || text === undefined) return { value: { code, signal: null } }
+      yield { stream: 'stdout' as const, text }
+    }
+  })
+  return curl
+}
+
+const lastSpawn = (curl: ReturnType<typeof fakeCurl>): FakeStream => {
+  const spawn = curl.spawns.at(-1)
+  if (!spawn) throw new Error('curl was never started')
+  return spawn
+}
+
+test('stream reader: headers, frames split anywhere, CRLF, comments and pings; any other answer keeps its body', () => {
+  const reader = new StreamReader()
+  const ask = sse({ type: 'session.ask', id: 'q1', data: { requestId: 'q1', question: 'a\nb' } })
+  const wire = `HTTP/1.1 100 Continue\r\n\r\n${STREAM_HEAD}: keep-alive\n\n${OPENED}${ask.replace(/\n/g, '\r\n')}event: ping\ndata: {"v":1,"type":"ping"}\n\n`
+  const frames = []
+  // One character at a time: no piece boundary may change what is read.
+  for (const ch of wire) frames.push(...reader.feed(ch))
+  expect(reader.status).toBe(200)
+  expect(frames.map(f => f.type)).toEqual(['session.registered', 'session.ask', 'ping'])
+  expect(frames[1]).toEqual({ type: 'session.ask', id: 'q1', data: { requestId: 'q1', question: 'a\nb' } })
+  const refused = new StreamReader()
+  expect(refused.feed('HTTP/2 403 \r\ncontent-type: application/json\r\n\r\n{"code":"connectors')).toEqual([])
+  refused.feed('_consent_required"}')
+  expect(refused.status).toBe(403)
+  expect(refused.answer).toBe('{"code":"connectors_consent_required"}')
+  expect(() => new StreamReader().feed('curl: (7) Failed to connect\r\n\r\n')).toThrow(/not HTTP/)
+  expect(parseEvent(': keep-alive')).toBe(undefined)
+  expect(parseEvent('data: not json')).toBe(undefined)
+  expect(parseEvent('data: {"no":"type"}')).toBe(undefined)
+})
+
+test('curl gets the URL and key on stdin, never in its arguments; a value that would break its config is not written', () => {
+  expect(CURL_ARGV[0]).toBe('curl')
+  expect(CURL_ARGV[1]).toBe('-q')
+  expect(CURL_ARGV).toContain('--include')
+  expect(CURL_ARGV.slice(-2)).toEqual(['--config', '-'])
+  expect(curlConfig('https://api.talkif.ai/api/v1/session-bridge/s1/stream', 'tif_live_abc-123', 'talkif-claude/0.32.0')).toBe(
+    'url = "https://api.talkif.ai/api/v1/session-bridge/s1/stream"\nheader = "Authorization: Bearer tif_live_abc-123"\nheader = "Accept: text/event-stream"\nuser-agent = "talkif-claude/0.32.0"\n',
+  )
+  expect(curlConfig('https://api.talkif.ai/x', 'tif_live_a"\nurl = "http://evil', 'ua')).toBe(undefined)
+  expect(curlConfig('https://api.talkif.ai/x" -o "/tmp/x', 'k', 'ua')).toBe(undefined)
+  expect(curlConfig('file:///etc/passwd', 'k', 'ua')).toBe(undefined)
+})
+
+test('after a stream: deploys and long healthy streams reconnect at once, quick failures back off, then the long-poll', () => {
+  expect(afterStream({ kind: 'closed', reason: 'server_shutting_down', livedMs: 5_000 }, 2, 0.5)).toEqual({ then: 'reconnect', afterMs: 500, failed: false })
+  expect(afterStream({ kind: 'dropped', opened: true, livedMs: 3_600_000, detail: 'curl exited 56' }, 0, 0)).toEqual({ then: 'reconnect', afterMs: 500, failed: false })
+  expect(afterStream({ kind: 'dropped', opened: true, livedMs: 2_000, detail: 'x' }, 0, 0.5)).toEqual({ then: 'reconnect', afterMs: 1_000, failed: true })
+  expect(afterStream({ kind: 'dropped', opened: false, livedMs: 0, detail: 'curl exited 7' }, 1, 0.5)).toEqual({ then: 'reconnect', afterMs: 2_000, failed: true })
+  expect(afterStream({ kind: 'dropped', opened: false, livedMs: 0, detail: 'x' }, 2, 0.5)).toMatchObject({ then: 'poll', offMs: STREAM_FAILING_OFF_MS })
+  expect(afterStream({ kind: 'closed', reason: 'replaced', livedMs: 1_000 }, 2, 0.5)).toMatchObject({ then: 'poll' })
+  expect(afterStream({ kind: 'unstartable', detail: 'spawn curl ENOENT' }, 0, 0.5)).toMatchObject({ then: 'poll', offMs: Infinity })
+  expect(afterStream({ kind: 'answered', status: 404, answer: '' }, 0, 0.5)).toEqual({ then: 'register' })
+  expect(afterStream({ kind: 'closed', reason: 'session_ended', livedMs: 1 }, 0, 0.5)).toEqual({ then: 'register' })
+  expect(afterStream({ kind: 'answered', status: 429, answer: '' }, 0, 0.5)).toMatchObject({ then: 'poll', offMs: 5 * 60_000 })
+  expect(afterStream({ kind: 'left' }, 2, 0.5)).toEqual({ then: 'reconnect', afterMs: 0, failed: false })
+})
+
+test('a Talkif that streams: turns come on the stream and are answered over HTTPS; nothing long-polls', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const world = fakeTalkif(on)
+  world.consent = true
+  world.registerAnswer = { stream: true }
+  const curl = fakeCurl(on)
+  on('model.fork', () => ({ value: { isAnswered: true, text: 'The deploy is green.', usage: MODEL_USAGE } }))
+  await startSession($)
+  await clock.settle()
+  const stream = lastSpawn(curl)
+  // The key goes to curl on stdin; its arguments are the same for everyone.
+  expect(stream.argv).toEqual(CURL_ARGV)
+  expect(stream.argv.join(' ')).not.toMatch(/tif_test_FAKE/)
+  expect(stream.input).toMatch(/^url = "https:\/\/api\.talkif\.ai\/api\/v1\/session-bridge\/bridge-1\/stream"$/m)
+  expect(stream.input).toMatch(/^header = "Authorization: Bearer tif_test_FAKE"$/m)
+  stream.push(STREAM_HEAD)
+  stream.push(OPENED)
+  const ask = sse({ type: 'session.ask', id: 'q1', data: { requestId: 'q1', callId: 'c-1', messages: [], kind: 'ask', question: 'Is the deploy green?' } })
+  stream.push(ask.slice(0, 25))
+  stream.push(ask.slice(25))
+  await clock.settle()
+  expect(world.requests.filter(r => r.path === '/session-bridge/bridge-1/ack').map(r => r.body)).toEqual([{ requestId: 'q1' }])
+  expect(replyBodies(world)).toEqual([{ requestId: 'q1', text: 'The deploy is green.', endCall: false }])
+  expect(world.nextUrls).toEqual([])
+  expect(await cm($, '')).toMatch(/^Connection: live stream\.$/m)
+  // Pings keep it open; one stream the whole time.
+  for (let i = 0; i < 4; i++) stream.push(sse({ type: 'ping' }))
+  await clock.advance(60_000)
+  expect(curl.spawns.length).toBe(1)
+  expect(world.nextUrls).toEqual([])
+})
+
+test('a call outcome on the stream is confirmed at once; after a reconnect its repeat is dropped', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const world = fakeTalkif(on)
+  world.consent = true
+  world.registerAnswer = { stream: true }
+  const curl = fakeCurl(on)
+  const prompts: string[] = []
+  on('prompt.submit', (_$, e) => {
+    prompts.push(e.text)
+    return { drop: 'captured by the test' }
+  })
+  await startSession($)
+  await clock.settle()
+  const ended = sse({ type: 'session.turn', id: 'e1', data: { requestId: 'e1', callId: 'call-1', messages: [], kind: 'call_ended', status: 'completed', transcript: 'Human: ship it' } })
+  lastSpawn(curl).push(STREAM_HEAD + OPENED + ended)
+  await clock.settle()
+  expect(prompts.length).toBe(1)
+  expect(prompts[0]).toMatch(/Human: ship it/)
+  const received = () => world.requests.filter(r => r.method === 'POST' && r.path === '/session-bridge/bridge-1/received').map(r => r.body)
+  expect(received()).toEqual([{ requestId: 'e1' }])
+  // The connection drops; the next stream sends the outcome again (as if the confirmation had been lost).
+  lastSpawn(curl).end(56)
+  await clock.advance(5_000)
+  expect(curl.spawns.length).toBe(2)
+  lastSpawn(curl).push(STREAM_HEAD + OPENED + ended)
+  await clock.settle()
+  expect(prompts.length).toBe(1)
+  expect(world.nextUrls).toEqual([])
+})
+
+test('an older Talkif (no stream in the register answer) is long-polled as before; curl never starts', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const world = fakeTalkif(on)
+  world.consent = true
+  const curl = fakeCurl(on)
+  await startSession($)
+  await clock.settle()
+  expect(curl.spawns.length).toBe(0)
+  expect(world.nextUrls.length).toBe(1)
+  expect(await cm($, '')).toMatch(/^Connection: long-poll \(this Talkif server does not push turns yet\)\.$/m)
+})
+
+test('the long-poll option: no stream even where Talkif has one', { options: { apiKey: 'tif_test_FAKE', transport: 'long-poll' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const world = fakeTalkif(on)
+  world.consent = true
+  world.registerAnswer = { stream: true }
+  const curl = fakeCurl(on)
+  await startSession($)
+  await clock.settle()
+  expect(curl.spawns.length).toBe(0)
+  expect(world.nextUrls.length).toBe(1)
+  expect(await cm($, '')).toMatch(/set to long-poll in the plugin options/)
+})
+
+test('no curl here: the long-poll at once, for the rest of the session', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const world = fakeTalkif(on)
+  world.consent = true
+  world.registerAnswer = { stream: true }
+  const curl = fakeCurl(on)
+  curl.missing = true
+  await startSession($)
+  await clock.settle()
+  expect(world.nextUrls.length).toBe(1)
+  expect(await cm($, '')).toMatch(/^Connection: long-poll \(curl could not start here \(.+\)\)\.$/m)
+  // Longer than any wait after a failing stream: still no try, curl will not appear in this session.
+  curl.missing = false
+  world.idle()
+  await clock.advance(STREAM_FAILING_OFF_MS + 60_000)
+  world.idle()
+  await clock.settle()
+  expect(curl.spawns.length).toBe(0)
+  expect(world.nextUrls.length).toBeGreaterThan(1)
+})
+
+test('the stream: an expired session registers again, a refusal pauses like a poll, a deploy reconnects at once', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const world = fakeTalkif(on)
+  world.consent = true
+  world.registerAnswer = { stream: true }
+  const curl = fakeCurl(on)
+  await startSession($)
+  await clock.settle()
+  expect(world.registers).toBe(1)
+  lastSpawn(curl).push('HTTP/2 404 \r\ncontent-type: application/json\r\n\r\n{"code":"not_found"}')
+  lastSpawn(curl).end(0)
+  await clock.settle()
+  expect(world.registers).toBe(2)
+  expect(curl.spawns.length).toBe(2)
+  // Connectors turned off: refused like a poll (said once), and tried again 30 s later.
+  lastSpawn(curl).push('HTTP/2 403 \r\ncontent-type: application/json\r\n\r\n{"code":"connectors_consent_required"}')
+  lastSpawn(curl).end(0)
+  await clock.settle()
+  expect(world.logs.filter(l => /Connectors are not turned on/.test(l)).length).toBe(1)
+  await clock.advance(29_000)
+  expect(curl.spawns.length).toBe(2)
+  await clock.advance(1_000)
+  expect(curl.spawns.length).toBe(3)
+  lastSpawn(curl).push(STREAM_HEAD + OPENED)
+  await clock.settle()
+  expect(world.logs.some(l => /access is back/.test(l))).toBe(true)
+  expect(await cm($, '')).toMatch(/^On\./)
+  // A deploy: Talkif says so and the stream comes back within a second, no failure counted.
+  lastSpawn(curl).push(sse({ type: 'session.closed', data: { reason: 'server_shutting_down' } }))
+  lastSpawn(curl).end(0)
+  await clock.advance(1_000)
+  expect(curl.spawns.length).toBe(4)
+  expect(world.nextUrls).toEqual([])
+})
+
+test('a stream that keeps failing long-polls for 10 minutes, then tries the stream again', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const world = fakeTalkif(on)
+  world.consent = true
+  world.registerAnswer = { stream: true }
+  const curl = fakeCurl(on)
+  await startSession($)
+  await clock.settle()
+  for (let i = 1; i <= 3; i++) {
+    expect(curl.spawns.length).toBe(i)
+    lastSpawn(curl).end(7)
+    await clock.advance(5_000)
+  }
+  expect(curl.spawns.length).toBe(3)
+  expect(world.nextUrls.length).toBe(1)
+  // Once a poll went through, the status is on again, and says why it polls.
+  world.idle()
+  await clock.settle()
+  expect(await cm($, '')).toMatch(/^Connection: long-poll \(the live stream kept dropping/m)
+  // Each poll after the 10 minutes looks again: the next round streams.
+  await clock.advance(STREAM_FAILING_OFF_MS)
+  world.idle()
+  await clock.settle()
+  expect(curl.spawns.length).toBe(4)
+})
+
+test('switched off while streaming: the session leaves and no stream or poll follows', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const world = fakeTalkif(on)
+  world.consent = true
+  world.registerAnswer = { stream: true }
+  const curl = fakeCurl(on)
+  await startSession($)
+  await clock.settle()
+  lastSpawn(curl).push(STREAM_HEAD + OPENED)
+  await clock.settle()
+  await cm($, 'off')
+  expect(world.requests.some(r => r.method === 'DELETE' && r.path === '/session-bridge/bridge-1')).toBe(true)
+  lastSpawn(curl).push(sse({ type: 'session.closed', data: { reason: 'session_ended' } }))
+  lastSpawn(curl).end(0)
+  await clock.advance(60_000)
+  expect(curl.spawns.length).toBe(1)
+  expect(world.nextUrls).toEqual([])
+  expect(world.registers).toBe(1)
 })

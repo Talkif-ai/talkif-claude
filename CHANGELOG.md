@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.32.0 — 2026-11-16
+
+- **Talkif pushes turns to the session.** In the terminal, the plugin holds a live stream (Server-Sent Events) open with `curl`, and each turn, question, task and call outcome arrives the moment Talkif has it, instead of the session asking again every 20 seconds. Answers still go over HTTPS, as before. The stream checks in every 15 seconds; one that goes quiet for 50 seconds, or drops, is opened again by itself (at once after a Talkif update, with a growing pause after quick failures).
+- **The long-poll stays, and takes over by itself** where a stream cannot run: the desktop and mobile apps (no programs), a computer without `curl`, an older Talkif, a stream that fails three times in a row (it is tried again after 10 minutes), or Talkif asking for fewer connections (again after 5 minutes). One way at a time per account: never a stream and a poll together, and a call outcome that comes again after a reconnect is handled once.
+- `/talkif` and `talkif_setup` say how this session gets its turns: `Connection: live stream`, or `Connection: long-poll` and why.
+- **New option `transport`:** `auto` (default) or `long-poll`, to always long-poll.
+- **`curl` is the one new program the plugin starts.** Its arguments are the same for everyone and hold nothing secret; the address and your API key reach it on standard input, and it reads no `~/.curlrc`. Needs the matching Talkif update; until then the plugin long-polls as before.
+
 ## 0.31.4 — 2026-11-15
 
 - **A task handed to a session always goes back to whoever sent it.** A task from another agent (a voice assistant, another session, a bot) now says on its first and on its last line where it came from (the sender's name, and what it is in plain words, such as "a cloud agent" or "a coding session", when Talkif says so), that whoever asked is not at this terminal and nobody reads replies there, and the only way back: `talkif_question` and `talkif_submit` for a task with a contract; for a plain task, the session's final message, which goes back by itself. A plain task's text from another session now comes fenced as that session's data, like a contract.

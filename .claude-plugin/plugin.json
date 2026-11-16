@@ -1,6 +1,6 @@
 {
   "name": "talkif",
-  "version": "0.31.4",
+  "version": "0.32.0",
   "description": "Talkif for Claude Code: the Talkif API as tools, your sessions reachable by voice through the Talkif app, tasks between sessions, and calls that ring you when a session needs you.",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -27,6 +27,16 @@
       "title": "Folders",
       "description": "Only sessions in these folders join (comma-separated, ~/ allowed). Empty: every session; /talkif on|off still decide.",
       "default": ""
+    },
+    "transport": {
+      "type": "string",
+      "title": "Connection",
+      "description": "auto (default): Talkif pushes turns to this session over a live stream, held by curl, where it can, and long-polls where it cannot (the desktop and mobile apps, no curl, an older Talkif). long-poll: always long-poll.",
+      "options": [
+        "auto",
+        "long-poll"
+      ],
+      "default": "auto"
     },
     "debug": {
       "type": "boolean",

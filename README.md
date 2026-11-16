@@ -118,6 +118,7 @@ Under the prompt, the plugin shows one status line:
 ```
 On. This session can be reached through Acme.
 Call "Claude Code calls" in the Talkif app.
+Connection: live stream.
 More: /talkif help
 ```
 
@@ -128,6 +129,19 @@ More: /talkif help
 ```
 
 When Talkif refuses the key (Connectors off, a missing scope, an IP allowlist), the plugin tries again every 30 seconds and comes back on by itself once it is fixed. `/talkif` tries again at once.
+
+### How turns reach the session
+
+In the terminal, the plugin holds a **live stream** open with `curl`: Talkif pushes each turn, question, task and call outcome the moment it has it. Where a stream cannot run, the plugin **long-polls** instead (it asks again every 20 seconds, and an answer comes back as soon as a turn arrives). It picks by itself and switches back when it can; the `Connection:` line of `/talkif` says which one and why. Either way, the session's answers go over HTTPS, and nothing on your computer is reachable from outside.
+
+| Where the session runs | How turns reach it |
+|---|---|
+| Claude Code in a terminal, with `curl` (macOS, Linux, Windows 10 and later) | live stream, pushed |
+| The Claude desktop or mobile app (no programs can start there) | long-poll |
+| No `curl`, an older Talkif, the `transport` option set to `long-poll` | long-poll |
+| The stream failed three times in a row, or Talkif asked for fewer connections | long-poll for 10 (or 5) minutes, then the stream again |
+
+Other agents reach Talkif in their own ways: a program that can hold a WebSocket or read a streaming response gets turns pushed the same way; apps connected with Sign in with Talkif and a webhook address get questions and tasks pushed to that address; MCP clients (claude.ai, Cursor, ChatGPT and others) are not pushed to at all, because an MCP server cannot start a turn in them: they see new events in each Talkif tool result and can wait for them with `talkif_inbox`.
 
 ## Using it
 
@@ -249,12 +263,16 @@ The plugin reads the conversation only to write what it sends: the recap, its an
 - **Away mode**: away or back, and for how long.
 - **The lead**: that this session becomes your lead, or no longer is (`/talkif lead`, `/talkif lead off`).
 - **/talkif publish** (only when you run it): writes the call prompt into your flow's Connectors node and publishes the flow.
+- **On the live stream**: the id of each call outcome it got, so Talkif does not send it again.
 
 It also reads from Talkif: your published flows (to find the one with a Connectors node), whether Connectors are on, the people a call can ring, your other reachable sessions, Talkif's setup check (whose phone a ring reaches and whether it has the Talkif app signed in, and whether the account is an organization), and, with the Calls (read) scope, the transcript of a `call_me` call to a teammate.
 
 ### Programs it starts
 
-Only `git`, in the session's folder, to name the session and its topics: `git rev-parse --show-toplevel`, `git branch --show-current` and `git remote get-url origin`. Nothing else. It reads one environment variable, `HOME`, to expand `~/` in the **Folders** option and to never name a session after your home folder.
+- `git`, in the session's folder, to name the session and its topics: `git rev-parse --show-toplevel`, `git branch --show-current` and `git remote get-url origin`.
+- `curl`, to hold the live stream from the Talkif API (see How turns reach the session), only while it is open. Its arguments are fixed and hold nothing secret (`curl -q --silent --show-error --no-buffer --include …  --config -`); the address and your API key reach it on standard input. `-q` keeps it from reading a `~/.curlrc`. With the `transport` option set to `long-poll`, it never starts.
+
+Nothing else. It reads one environment variable, `HOME`, to expand `~/` in the **Folders** option and to never name a session after your home folder.
 
 ### Files it writes
 
@@ -346,6 +364,7 @@ Change them in `/config` → talkif. The API key is in `/plugin` → Installed �
 | `ringOnFinish` | off | ring when a turn of 10 minutes or more finished |
 | `parallel` | off | queue more tasks from a call while one runs, instead of saying "still on the last task" |
 | `debug` | off | record this session's traffic for `/talkif traffic` |
+| `transport` | `auto` | `auto`: a live stream where this session can hold one (`curl` in a terminal), the long-poll elsewhere. `long-poll`: always the long-poll |
 
 ## Troubleshooting
 
@@ -360,6 +379,8 @@ Change them in `/config` → talkif. The API key is in `/plugin` → Installed �
 | `call_me` says it is ringing, but no phone rings | Run `/talkif setup` and look at the Phone line: call_me rings the Talkif app on an iPhone signed in to the same account. Without one, only a Talkif app or dashboard that is open at that moment rings. |
 | A session never rings you while you are away | Ask Claude to run `talkif_setup`: if `call_me` stops at a permission prompt, it names the rule to add. |
 | `the API key was refused (expired or revoked?)` | Create a new key and paste it in Configure options. |
+| `Connection: long-poll (curl could not start here …)` | Install `curl`, or leave it: the long-poll works the same, with a request every 20 seconds. The plugin tries the stream again in the next session. |
+| `Connection: long-poll (the live stream kept dropping …)` | Something on the way (a proxy, a firewall) cuts long responses. The plugin tries again every 10 minutes; set `transport` to `long-poll` to stop trying. |
 | `/talkif` is an unknown command in a session | The session's folder is not in the `folders` option. Add it, or empty the option. |
 | Your call does not reach the session | Call from the Talkif app while signed in, and check `/talkif` says `On`. |
 | `/plugin` lists **talkif** more than once | One is the plugin, the others its tools: Claude Code shows the plugin's own tools (`call_me` and the task tools) as an MCP server named after the plugin, and the bundled Talkif API server as a second one. Same plugin, nothing extra to connect. |
