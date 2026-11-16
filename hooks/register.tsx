@@ -691,6 +691,7 @@ type BridgeTurn = { requestId: string; callId: string; messages: unknown[]; kind
 // streams: the server said it pushes turns over a live stream (register answer `stream`).
 // transport: how turns arrive now: 'stream' while a live stream is open, 'poll' while long-polling.
 // streamFailures: quick stream failures in a row; streamOff: no stream until then, and why.
+// streamOpened: a stream opened since the session last registered (a 404 then means it expired).
 type Bridge = {
   name: string
   key: string
@@ -705,6 +706,7 @@ type Bridge = {
   transport?: 'stream' | 'poll'
   streamFailures: number
   streamOff?: { until: number; why: string }
+  streamOpened?: boolean
 }
 const labelOf = (b: Bridge): string => accountLabel(b.name, b.accountName)
 const bridges: Bridge[] = []
@@ -1036,6 +1038,7 @@ async function bridgeRegister($: EngineInterface, bridge: Bridge): Promise<boole
   bridge.callEnds = sendsEnds
   bridge.lead = parseLead(body)
   bridge.streams = isRecord(body) && body.stream === true
+  bridge.streamOpened = false
   if (isRecord(body)) await applyPresence($, parsePresence(body.presence))
   // Registered: access is back, whatever refused it before.
   if (bridge.session) resume($, `bridge:${bridge.name}`)
@@ -2312,7 +2315,7 @@ async function bridgeStream($: EngineInterface, bridge: Bridge, session: string)
       return
     }
   }
-  const next = afterStream(end, bridge.streamFailures, Math.random())
+  const next = afterStream(end, bridge.streamFailures, Math.random(), bridge.streamOpened === true)
   if (next.then === 'register') {
     // Expired or ended on the server: register again next round (and Talkif ended its lead).
     if (bridge.session === session) {
@@ -2398,6 +2401,7 @@ async function holdStream($: EngineInterface, bridge: Bridge, session: string): 
 
 async function streamOpened($: EngineInterface, bridge: Bridge) {
   bridge.transport = 'stream'
+  bridge.streamOpened = true
   bridge.failures = 0
   resume($, `bridge:${bridge.name}`)
   // A call outcome the last poll got, not yet confirmed: confirmed here, no poll follows.

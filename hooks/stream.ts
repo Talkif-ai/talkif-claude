@@ -22,6 +22,8 @@ export const CURL_ARGV: readonly string[] = [
   '--no-buffer',
   '--include',
   '--suppress-connect-headers',
+  // The address is used as written: no [ ] or { } ranges.
+  '--globoff',
   '--connect-timeout',
   '15',
   // Talkif pings every 15 s: 50 s without a byte is a dead stream, and curl ends it (exit 28).
@@ -146,14 +148,17 @@ export const STREAM_FAILURES_BEFORE_POLL = 3
 export const STREAM_FAILING_OFF_MS = 10 * 60_000
 /** How long it long-polls after Talkif refused another stream (429: too many, too often). */
 export const STREAM_BUSY_OFF_MS = 5 * 60_000
-/** A stream that lived this long and then dropped is no failure: it reconnects at once. */
-export const STREAM_HEALTHY_MS = 60_000
+/** How long it long-polls after Talkif did not find the stream before any opened (a server not updated yet). */
+export const STREAM_MISSING_OFF_MS = 60_000
+/** A stream that lived this long (pings came) and then dropped is no failure: it reconnects at once. */
+export const STREAM_HEALTHY_MS = 20_000
 
 /**
- * The next step after a stream ended, given the failures before it in a row.
- * `random` in [0, 1) spreads the reconnects of many sessions after a deploy.
+ * The next step after a stream ended, given the failures before it in a row and whether
+ * a stream opened since the session last registered. `random` in [0, 1) spreads the
+ * reconnects of many sessions after a deploy.
  */
-export function afterStream(end: StreamEnd, failuresBefore: number, random: number): StreamNext {
+export function afterStream(end: StreamEnd, failuresBefore: number, random: number, openedSinceRegister: boolean): StreamNext {
   const jitter = (base: number) => Math.round(base * (0.5 + random))
   const failure = (): StreamNext => {
     const failures = failuresBefore + 1
@@ -164,11 +169,18 @@ export function afterStream(end: StreamEnd, failuresBefore: number, random: numb
     case 'unstartable':
       return { then: 'poll', offMs: Infinity, why: `curl could not start here (${end.detail})` }
     case 'answered':
-      if (end.status === 404) return { then: 'register' }
+      // After a stream of this session opened, a 404 means the session expired. Before
+      // any did, it is a server without the stream (one not updated yet, while Talkif
+      // updates): registering again would land there again, so long-poll for a minute.
+      if (end.status === 404) {
+        return openedSinceRegister ? { then: 'register' } : { then: 'poll', offMs: STREAM_MISSING_OFF_MS, why: 'Talkif did not find the live stream; it is tried again in a minute' }
+      }
       if (end.status === 429) return { then: 'poll', offMs: STREAM_BUSY_OFF_MS, why: 'Talkif refused another live stream for now; it is tried again in 5 minutes' }
       return failure()
     case 'closed':
       if (end.reason === 'session_ended') return { then: 'register' }
+      // Every minute Talkif asks for the next stream, so a client that went away goes offline.
+      if (end.reason === 'reconnect') return { then: 'reconnect', afterMs: 0, failed: false }
       // A deploy: another server takes it at once.
       if (end.reason === 'server_shutting_down') return { then: 'reconnect', afterMs: Math.round(1_000 * random), failed: false }
       // The next connect is refused if the key really is; that pauses like a poll.

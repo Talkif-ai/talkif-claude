@@ -132,14 +132,14 @@ When Talkif refuses the key (Connectors off, a missing scope, an IP allowlist), 
 
 ### How turns reach the session
 
-In the terminal, the plugin holds a **live stream** open with `curl`: Talkif pushes each turn, question, task and call outcome the moment it has it. Where a stream cannot run, the plugin **long-polls** instead (it asks again every 20 seconds, and an answer comes back as soon as a turn arrives). It picks by itself and switches back when it can; the `Connection:` line of `/talkif` says which one and why. Either way, the session's answers go over HTTPS, and nothing on your computer is reachable from outside.
+In the terminal, the plugin holds a **live stream** open with `curl`: Talkif pushes each turn, question, task and call outcome the moment it has it. Talkif asks for a fresh stream every minute (the plugin opens it at once), so a computer that went to sleep shows as offline about as soon as with the long-poll. Where a stream cannot run, the plugin **long-polls** instead (it asks again every 20 seconds, and an answer comes back as soon as a turn arrives). It picks by itself and switches back when it can; the `Connection:` line of `/talkif` says which one and why. Either way, the session's answers go over HTTPS, and nothing on your computer is reachable from outside.
 
 | Where the session runs | How turns reach it |
 |---|---|
 | Claude Code in a terminal, with `curl` (macOS, Linux, Windows 10 and later) | live stream, pushed |
 | The Claude desktop or mobile app (no programs can start there) | long-poll |
 | No `curl`, an older Talkif, the `transport` option set to `long-poll` | long-poll |
-| The stream failed three times in a row, or Talkif asked for fewer connections | long-poll for 10 (or 5) minutes, then the stream again |
+| The stream failed three times in a row, Talkif did not find it (while Talkif updates), or Talkif asked for fewer connections | long-poll for 10 minutes (1, 5), then the stream again |
 
 Other agents reach Talkif in their own ways: a program that can hold a WebSocket or read a streaming response gets turns pushed the same way; apps connected with Sign in with Talkif and a webhook address get questions and tasks pushed to that address; MCP clients (claude.ai, Cursor, ChatGPT and others) are not pushed to at all, because an MCP server cannot start a turn in them: they see new events in each Talkif tool result and can wait for them with `talkif_inbox`.
 
