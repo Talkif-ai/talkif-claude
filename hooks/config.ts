@@ -308,7 +308,7 @@ export function statusText(state: TalkifState): string {
 
 export const MORE = 'More: /talkif help'
 
-/** /talkif: two or three lines, in the same order as statusText. */
+/** /talkif: a few lines, in the same order as statusText, then the connection. */
 export function cmLines(state: TalkifState): string {
   if (state.problem) return [`Not connected: ${state.problem.reason}.`, `Next: ${sentence(state.problem.next)}`, MORE].join('\n')
   if (state.off) return [`Off. Turn it on with ${state.off === 'all' ? '/talkif on all' : '/talkif on'}.`, MORE].join('\n')

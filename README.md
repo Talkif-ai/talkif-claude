@@ -113,7 +113,7 @@ Under the prompt, the plugin shows one status line:
 | `Talkif: off` | this session is switched off (`/talkif on` turns it back on) |
 | `Talkif: not connected — run /talkif` | no API key, a setup problem, or Talkif refused the key: `/talkif` says why, `/talkif setup` checks everything |
 
-`/talkif` gives the same answer in two or three lines, for example:
+`/talkif` gives the same answer in a few lines, with how turns reach the session, for example:
 
 ```
 On. This session can be reached through Acme.
