@@ -196,7 +196,7 @@ export function afterStream(end: StreamEnd, history: StreamHistory, random: numb
       return failure()
     case 'closed':
       if (end.reason === 'session_ended') return { then: 'register' }
-      // Every minute Talkif asks for the next stream, so a client that went away goes offline.
+      // About once a minute (45 to 75 s, at random) Talkif asks for the next stream, so a client that went away goes offline.
       if (end.reason === 'reconnect') return { then: 'reconnect', afterMs: 0, failed: false }
       // A deploy: another server takes it at once.
       if (end.reason === 'server_shutting_down') return { then: 'reconnect', afterMs: Math.round(1_000 * random), failed: false }

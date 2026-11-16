@@ -2290,6 +2290,9 @@ test('after a stream: deploys and long healthy streams reconnect at once, quick 
   expect([0, 1, 2, 3, 4].map(c => (n => (n.then === 'poll' ? n.offMs / 60_000 : 0))(failing(c)))).toEqual([10, 20, 40, 80, 120])
   expect(failing(1)).toMatchObject({ failing: true, why: 'the live stream kept dropping; it is tried again in 20 minutes' })
   expect(wasHealthy({ kind: 'closed', reason: 'reconnect', livedMs: 60_000 })).toBe(true)
+  // Talkif picks each stream's life between 45 and 75 s: the shortest is a healthy one too, reconnected at once.
+  expect(wasHealthy({ kind: 'closed', reason: 'reconnect', livedMs: 45_000 })).toBe(true)
+  expect(afterStream({ kind: 'closed', reason: 'reconnect', livedMs: 45_000 }, { failures: 2, cooldowns: 1, openedSinceRegister: true }, 0.9)).toEqual({ then: 'reconnect', afterMs: 0, failed: false })
   expect(wasHealthy({ kind: 'dropped', opened: false, livedMs: 50_000, detail: 'x' })).toBe(false)
   expect(wasHealthy({ kind: 'closed', reason: 'server_shutting_down', livedMs: 3_000 })).toBe(false)
 })

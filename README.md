@@ -132,7 +132,7 @@ When Talkif refuses the key (Connectors off, a missing scope, an IP allowlist), 
 
 ### How turns reach the session
 
-In the terminal, the plugin holds a **live stream** open with `curl`: Talkif pushes each turn, question, task and call outcome the moment it has it. Talkif asks for a fresh stream every minute (the plugin opens it at once), so a computer that went to sleep shows as offline about as soon as with the long-poll. Where a stream cannot run, the plugin **long-polls** instead (it asks again every 20 seconds, and an answer comes back as soon as a turn arrives). It picks by itself and switches back when it can; the `Connection:` line of `/talkif` says which one and why. Either way, the session's answers go over HTTPS, and nothing on your computer is reachable from outside.
+In the terminal, the plugin holds a **live stream** open with `curl`: Talkif pushes each turn, question, task and call outcome the moment it has it. Talkif asks for a fresh stream about once a minute (the plugin opens it at once), so a computer that went to sleep shows as offline about as soon as with the long-poll. Where a stream cannot run, the plugin **long-polls** instead (it asks again every 20 seconds, and an answer comes back as soon as a turn arrives). It picks by itself and switches back when it can; the `Connection:` line of `/talkif` says which one and why. Either way, the session's answers go over HTTPS, and nothing on your computer is reachable from outside.
 
 | Where the session runs | How turns reach it |
 |---|---|
