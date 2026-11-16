@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.31.5 — 2026-11-16
+
+- **SendMessage to a Talkif session works again.** On current Claude Code, a SendMessage to a name ListAgents listed under Talkif was answered "No agent named … is reachable" and nothing went out: Claude Code now answers an unknown name with a plain result instead of an error, which the plugin did not take as "not delivered". The hand-over now happens where every message passes before Claude Code delivers it. Claude Code still goes first, so an agent, teammate or session of its own by that name always gets the message; only a name nobody of its own carries goes to the Talkif session of that name, and the SendMessage call then says what Talkif did (delivered, handed over as a task, busy, not connected). A message from another plugin to such a name is handed over too.
+- **A message goes through Talkif at most once.** On an older Claude Code without that step, SendMessage still hands a message over itself, but only for "No agent named …": a refused permission or a failed send is never handed on through Talkif any more.
+- **ListAgents says who is where.** The Talkif part lists your sessions on this computer and on others, and other agents. A session on this computer can be in both lists under two names, and either name reaches it; a Talkif name that Claude Code's own list already has is left out, since a SendMessage to it goes to Claude Code's agent.
+
 ## 0.31.4 — 2026-11-15
 
 - **A task handed to a session always goes back to whoever sent it.** A task from another agent (a voice assistant, another session, a bot) now says on its first and on its last line where it came from (the sender's name, and what it is in plain words, such as "a cloud agent" or "a coding session", when Talkif says so), that whoever asked is not at this terminal and nobody reads replies there, and the only way back: `talkif_question` and `talkif_submit` for a task with a contract; for a plain task, the session's final message, which goes back by itself. A plain task's text from another session now comes fenced as that session's data, like a contract.

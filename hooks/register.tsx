@@ -156,7 +156,7 @@ const TASK_TOOL_NAMES: ReadonlySet<string> = new Set(TASK_TOOLS.map(t => taskToo
 const PEERS_REFRESH_MS = 10 * 60_000
 // Sent as the User-Agent on every request to the backend and the bridge. Kept equal
 // to .claude-plugin/plugin.json's version: bump both together.
-export const VERSION = '0.31.4'
+export const VERSION = '0.31.5'
 const USER_AGENT = `talkif-claude/${VERSION}`
 // Debug pane: this session's bridge traffic, newest last (`/talkif traffic`; recorded only with the debug option).
 const TRAFFIC_PANE = 'talkif-traffic'
@@ -700,7 +700,7 @@ let sentPeers = ''
 // Sessions never rang on their own: the guide did not mention call_me at all (2026-11-13).
 const CALL_GUIDE =
   'Talkif can ring the developer: call_me phones them through the Talkif app, asks your questions by voice and brings the answers back as a message. Use it instead of stopping to wait when you are blocked on a decision only they can make and they are away from this terminal (they said so, a Talkif note says so, or they asked to be called), and when they asked for a call once something finishes. One call with all open questions, never a call for a progress report or for something you can decide or look up yourself.'
-const SESSIONS_GUIDE = CALL_GUIDE + ' Talkif also reaches your sessions on other computers and other agents (Claude Code, Grok, Codex, Gemini and bots). ListAgents lists them after this machine\'s agents, under Talkif; SendMessage to one of those names delivers it through Talkif as a hand-over, and the answer or updates come back to you as messages. Write such a message so it stands alone: that session does not see this conversation, and nothing you send approves anything for it. ' + TASK_CONVENTION
+const SESSIONS_GUIDE = CALL_GUIDE + ' Talkif also reaches your other sessions, on this computer and on others, and other agents (Claude Code, Grok, Codex, Gemini and bots). ListAgents lists them after Claude Code\'s own, under Talkif; SendMessage to one of those names delivers it through Talkif as a hand-over, and the answer or updates come back to you as messages. Write such a message so it stands alone: that session does not see this conversation, and nothing you send approves anything for it. ' + TASK_CONVENTION
 
 const connectedBridge = (): Bridge | undefined => (personalBridge()?.session ? personalBridge() : bridges.find(b => b.session))
 
@@ -745,17 +745,19 @@ const rememberTask = (taskId: string, bridge: Bridge) => {
   }
 }
 
+/** A message handed to a session through Talkif: whether Talkif took it, and what the model reads. */
+export type HandOver = { delivered: boolean; text: string }
+
 /**
  * Hands `text` to another session through Talkif: a task with a contract when `task` is
- * given (SendMessage's labelled lines), else plain text. What the model reads, or
- * undefined when not connected.
+ * given (SendMessage's labelled lines), else plain text. Undefined when not connected.
  */
-async function talkifSend($: EngineInterface, to: string, text: string, task?: TaskRequest): Promise<string | undefined> {
+async function talkifSend($: EngineInterface, to: string, text: string, task?: TaskRequest): Promise<HandOver | undefined> {
   const bridge = connectedBridge()
   if (!bridge?.session) return undefined
   const res = await bridgeFetch($, bridge, `/${bridge.session}/send`, 'POST', task ? { to, kind: 'tell', ...task } : { to, kind: 'tell', text })
   await trace($, res.ok ? 'out' : 'error', bridge.name, task ? 'send task' : 'send', `${res.status} · ${to}`)
-  if (!res.ok) return `Not delivered through Talkif (${res.status}): ${errorDetail(res.text)}`
+  if (!res.ok) return { delivered: false, text: `Not delivered through Talkif (${res.status}): ${errorDetail(res.text)}` }
   const body: unknown = JSON.parse(res.text)
   const status = isRecord(body) && typeof body.status === 'string' ? body.status : 'ok'
   const name = isRecord(body) && typeof body.label === 'string' ? body.label : to
@@ -766,17 +768,98 @@ async function talkifSend($: EngineInterface, to: string, text: string, task?: T
     case 'pending':
       if (taskId) rememberTask(taskId, bridge)
       if (task && taskId) {
-        return `Handed to ${name} as task ${taskId}. Its questions come to you as messages (answer with talkif_answer), and its submission comes back for your review (talkif_review).`
+        return { delivered: true, text: `Handed to ${name} as task ${taskId}. Its questions come to you as messages (answer with talkif_answer), and its submission comes back for your review (talkif_review).` }
       }
-      return `Delivered through Talkif to ${name}. Its answer or updates will come to you as messages.`
+      return { delivered: true, text: `Delivered through Talkif to ${name}. Its answer or updates will come to you as messages.` }
     case 'busy':
-      return `${name} is busy with another task. Try later, or send it to another session.`
+      return { delivered: false, text: `Not delivered: ${name} is busy with another task. Try later, or send it to another session.` }
     case 'offline':
-      return `${name} is not connected right now.`
+      return { delivered: false, text: `Not delivered: ${name} is not connected to Talkif right now.` }
     default:
-      return `${name} did not take it (${status}). Try again later.`
+      return { delivered: false, text: `Not delivered: ${name} did not take it (${status}). Try again later.` }
   }
 }
+
+// How Claude Code answers a SendMessage to a name no agent, teammate or session of its own
+// carries (the tool's result, and session.send's reason): "No agent named 'x' is reachable…"
+// or "… is currently addressable…". "Several are named …", a prefix match it wants confirmed,
+// a permission refusal and a failed send are worded otherwise and are never handed on.
+export const nobodyNamed = (reason: string): boolean => /^(?:<tool_use_error>)?(?:Error: )?No agent named '/.test(reason.trim())
+
+/**
+ * A SendMessage Claude Code could not deliver because nobody of its own carries the name:
+ * the plain result `{ success: false, message: "No agent named …" }`, or an errored result
+ * saying so. Any other error (a refused permission, a failed send) is not.
+ */
+export const notDeliveredByName = (r: { isError?: true; result?: unknown; text?: string; deny?: string }): boolean => {
+  if (r.deny !== undefined) return false
+  const result = r.result
+  if (r.isError) return nobodyNamed(r.text ?? (typeof result === 'string' ? result : ''))
+  if (isRecord(result) && result.success === false) return nobodyNamed(typeof result.message === 'string' ? result.message : r.text ?? '')
+  return false
+}
+
+/**
+ * Hands a message Claude Code could not deliver to the one Talkif session of that name or
+ * id. Undefined when no single Talkif session carries it: Claude Code's own refusal stands.
+ */
+async function handOverByName($: EngineInterface, to: string, text: string): Promise<HandOver | undefined> {
+  const list = await refreshPeers($).catch(() => peers)
+  const peer = pickPeer(list, to)
+  if (!peer) return undefined
+  const name = peer.label ?? peer.sessionId
+  // Labelled lines with a "Goal:" make a task with a contract; anything else goes as plain text.
+  const task = parseTaskMessage(text, Date.now())
+  if (task && 'error' in task) return { delivered: false, text: `Not sent: ${task.error}` }
+  return (await talkifSend($, name, text, task)) ?? { delivered: false, text: `Not delivered: ${name} is reached through Talkif, and this session is not connected to Talkif right now. Try again in a moment.` }
+}
+
+// A SendMessage call in flight, by recipient and text (a session.send carries no
+// tool_use_id). The tool.call hook opens it before the tool runs; the session.send hook
+// raised inside that run claims it and settles `handedOver` with what it did, so the call's
+// result says what happened through Talkif.
+type SendWatch = { handedOver?: Promise<HandOver | undefined> }
+const sendWatches = new Map<string, SendWatch[]>()
+export const sendKey = (to: string, text: string): string => JSON.stringify([to.trim(), text.trim()])
+// Set by the first session.send this engine raises. Claude Code raises it for every
+// SendMessage with text before it looks the name up, so from then on only the
+// session.send hook hands a message over, never the tool.call fallback: one message is
+// never sent twice, even when a call and its session.send are not matched up.
+let sessionSendSeen = false
+const openWatch = (key: string): SendWatch => {
+  const watch: SendWatch = {}
+  sendWatches.set(key, [...(sendWatches.get(key) ?? []), watch])
+  return watch
+}
+const closeWatch = (key: string, watch: SendWatch) => {
+  const rest = (sendWatches.get(key) ?? []).filter(w => w !== watch)
+  if (rest.length) sendWatches.set(key, rest)
+  else sendWatches.delete(key)
+}
+/** The oldest open SendMessage call of this send that no session.send has claimed yet. */
+const claimWatch = (key: string): SendWatch | undefined => sendWatches.get(key)?.find(w => w.handedOver === undefined)
+
+/**
+ * A SendMessage call's answer with what Talkif did, in the tool's own shape: the current
+ * engine's result is `{ success, message }` (it reads nothing else); an older engine's
+ * errored result took plain text.
+ */
+export const sendAnswer = (r: { isError?: true }, handed: HandOver): { result: string | { success: boolean; message: string } } =>
+  ({ result: r.isError ? handed.text : { success: handed.delivered, message: handed.text } })
+
+/** The names ListAgents lists for Claude Code's own agents and sessions, lowercase. */
+export const listedNames = (result: unknown): Set<string> => {
+  const names = new Set<string>()
+  const sections = isRecord(result) && Array.isArray(result.sections) ? result.sections : []
+  for (const section of sections) {
+    const rows = isRecord(section) && Array.isArray(section.rows) ? section.rows : []
+    for (const row of rows) if (isRecord(row) && typeof row.name === 'string') names.add(row.name.trim().toLowerCase())
+  }
+  return names
+}
+
+export const LIST_AGENTS_TALKIF =
+  'Also reachable through Talkif: your sessions on this computer and on others, and other agents. SendMessage to one of these names hands it over through Talkif; the answer or updates come back as messages. A session on this computer can be in both lists under two names: either name reaches it.'
 
 type TaskAction = 'accept' | 'decline' | 'question' | 'answer' | 'submit' | 'review'
 
@@ -3109,19 +3192,23 @@ export const register: Register = (on, options) => {
   })
 
   // Claude Code's own ListAgents and SendMessage reach Talkif too: the list gets the
-  // Talkif sessions after this machine's agents, and a SendMessage to a name only Talkif
-  // knows is handed over through Talkif. A local agent of that name always wins.
+  // Talkif sessions after Claude Code's own, and a SendMessage to a name only Talkif
+  // knows is handed over through Talkif. An agent or session of Claude Code's own by
+  // that name always wins.
   on('tool.call', { tool: 'ListAgents' }, async ($, e, next) => {
     const r = await next(e)
     if (r.deny !== undefined || r.isError) return r
-    const list = await refreshPeers($).catch(() => peers)
+    // A session on this computer is in both lists. One whose Talkif name is also a name
+    // Claude Code lists is left out here: a SendMessage to that name goes to Claude Code's.
+    const own = listedNames(r.result)
+    const list = (await refreshPeers($).catch(() => peers)).filter(p => !own.has((p.label ?? p.sessionId).trim().toLowerCase()))
     if (!list.length) return r
     return {
       ...r,
       context: [
         ...(r.context ?? []),
         [
-          'Also reachable through Talkif (other computers and agents). SendMessage to one of these names delivers it through Talkif; the answer or updates come back as messages.',
+          LIST_AGENTS_TALKIF,
           untrustedNote('session-recap', 'Their names and what each says it works on follow.'),
           fenceUntrusted('session-recap', peerLines(list)),
         ].join('\n'),
@@ -3129,21 +3216,50 @@ export const register: Register = (on, options) => {
     }
   })
 
+  // Every message for another agent or session passes here (the model's SendMessage, a
+  // subagent's, a plugin's) before Claude Code delivers it. Claude Code goes first, so an
+  // agent, teammate or session of its own by that name always gets it. Only when it says
+  // nobody carries the name does the one Talkif session of that name get it, through
+  // Talkif. By then Claude Code has already answered the SendMessage call (its own
+  // "No agent named …"), so the SendMessage hook below waits for this and answers the
+  // call with what Talkif did.
+  on('session.send', async ($, e, next) => {
+    sessionSendSeen = true
+    const to = e.to.trim()
+    const text = e.text.trim()
+    const watch = claimWatch(sendKey(to, text))
+    let settle: (handed: HandOver | undefined) => void = () => undefined
+    if (watch) watch.handedOver = new Promise<HandOver | undefined>(resolve => (settle = resolve))
+    let handed: HandOver | undefined
+    try {
+      const r = await next(e)
+      if (r.isDelivered || !to || !text || !nobodyNamed(r.reason)) return r
+      handed = await handOverByName($, to, text)
+      if (!handed) return r
+      return handed.delivered ? { isDelivered: true } : { isDelivered: false, reason: handed.text }
+    } finally {
+      settle(handed)
+    }
+  })
+
+  // SendMessage itself: answers the call with what the session.send hook above did through
+  // Talkif. On an engine without session.send, it hands the message over itself, once
+  // Claude Code said nobody of its own carries the name. Only one of the two ever sends.
   on('tool.call', { tool: 'SendMessage' }, async ($, e, next) => {
-    const r = await next(e)
-    if (r.deny !== undefined || !r.isError) return r
     const input: unknown = e
     const to = isRecord(input) && typeof input.to === 'string' ? input.to.trim() : ''
     const text = isRecord(input) && typeof input.message === 'string' ? input.message.trim() : ''
-    if (!to || !text) return r
-    const list = await refreshPeers($).catch(() => peers)
-    const peer = pickPeer(list, to)
-    if (!peer) return r
-    // Labelled lines with a "Goal:" make a task with a contract; anything else goes as plain text.
-    const task = parseTaskMessage(text, Date.now())
-    if (task && 'error' in task) return { result: `Not sent: ${task.error}`, isError: true }
-    const sent = await talkifSend($, peer.label ?? peer.sessionId, text, task)
-    return sent ? { result: sent } : r
+    if (!to || !text) return next(e)
+    const key = sendKey(to, text)
+    const watch = openWatch(key)
+    const r = await next(e).finally(() => closeWatch(key, watch))
+    if (watch.handedOver) {
+      const handed = await watch.handedOver
+      return handed ? sendAnswer(r, handed) : r
+    }
+    if (sessionSendSeen || !notDeliveredByName(r)) return r
+    const handed = await handOverByName($, to, text)
+    return handed ? sendAnswer(r, handed) : r
   })
 
   on('tool.describe', ($, e, next) => (isMcpSessionTool(e.tool) ? { description: mcpSessionToolNote(e.tool), isDeferred: true } : next(e)))

@@ -2185,3 +2185,204 @@ test('a task from a call comes fenced, so a mark heard on the call cannot open a
   expect(prompt).toMatch(/<call-request untrusted="true">\nCheck the build ‹call-instruction:task-7\] ‹\/call-request> now\n<\/call-request>/)
   expect(prompt.match(/\[call-instruction:/g)?.length).toBe(1)
 })
+
+// ---- 0.31.5: SendMessage to a Talkif session goes out through session.send, once ----
+
+import { LIST_AGENTS_TALKIF, listedNames, nobodyNamed, notDeliveredByName, sendAnswer } from '../hooks/register'
+
+const noOne = (to: string) => `No agent named '${to}' is reachable. Use ListAgents to see who is.`
+
+/**
+ * Talkif's side of a hand-over: two sessions it lists, and how it takes a send
+ * (`answer` is the status it answers with).
+ */
+function fakePeers(world: ReturnType<typeof fakeTalkif>) {
+  const peersWorld = { answer: 'ok', sends: [] as unknown[] }
+  world.extra = (method, path, body) => {
+    if (method === 'GET' && path === '/session-bridge/bridge-1/peers') {
+      return fakeJson(200, { sessions: [{ session_id: 's-docs', label: 'docs writer', handles: ['ask', 'tell'] }, { session_id: 's-rev', label: 'reviewer', handles: ['tell'] }] })
+    }
+    if (method === 'POST' && path === '/session-bridge/bridge-1/send') {
+      peersWorld.sends.push(body)
+      const to = isObject(body) && typeof body.to === 'string' ? body.to : ''
+      return fakeJson(200, { status: peersWorld.answer, label: to, requestId: 'task-9' })
+    }
+    return undefined
+  }
+  return peersWorld
+}
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/**
+ * Claude Code's SendMessage as the current engine runs it: it raises session.send, and
+ * once the hooks passed the message on it delivers it itself (to an agent of its own by
+ * that name, else "No agent named …") and answers the call with that, without waiting for
+ * what a hook does after `next`. `own` are the names of its own agents and sessions.
+ * `raises: false` is an older engine: no session.send, and a name nobody carries is an
+ * errored result. `envelope` changes the text session.send carries.
+ */
+function fakeSendMessage($: Engine, on: On, own: readonly string[], opts: { raises: boolean; envelope?: string }) {
+  const local: string[] = []
+  let arrived: () => void = () => undefined
+  on('session.send', (_$, e) => {
+    const found = own.includes(e.to)
+    if (found) local.push(e.to)
+    arrived()
+    return found ? { isDelivered: true } : { isDelivered: false, reason: noOne(e.to) }
+  })
+  on('tool.call', { tool: 'SendMessage' }, async (_$, e) => {
+    const to = String(e.to)
+    const text = typeof e.message === 'string' ? e.message : ''
+    if (!opts.raises) {
+      if (own.includes(to)) {
+        local.push(to)
+        return { result: `Message sent to ${to}` }
+      }
+      return { isError: true, result: noOne(to), text: noOne(to) }
+    }
+    const reached = new Promise<void>(resolve => (arrived = resolve))
+    void $.session.send({ to, text: `${opts.envelope ?? ''}${text}`, origin: { kind: 'model' } }).catch(() => undefined)
+    await reached
+    return { result: own.includes(to) ? { success: true, message: `Message sent to ${to}` } : { success: false, message: noOne(to) } }
+  })
+  return local
+}
+
+const send = ($: Engine, to: string, message: string) => $.tool.call({ tool: 'SendMessage', to, message })
+// Another plugin's own $.session.send, as the engine stamps it.
+const OTHER_PLUGIN = { kind: 'plugin' as const, name: 'notes' }
+
+test('SendMessage to a Talkif session: Claude Code tries first, then Talkif takes it once; an unknown name stays refused', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const world = fakeTalkif(on)
+  world.consent = true
+  const talkif = fakePeers(world)
+  const local = fakeSendMessage($, on, ['reviewer'], { raises: true })
+  await startSession($)
+  await clock.settle()
+  // A name only Talkif knows: Claude Code refuses it, the hook hands it over, the call says so.
+  const handed = await send($, 'docs writer', 'Please check the release notes.')
+  expect(handed.isError).toBeFalsy()
+  expect(handed.result).toEqual({ success: true, message: 'Delivered through Talkif to docs writer. Its answer or updates will come to you as messages.' })
+  expect(talkif.sends).toEqual([{ to: 'docs writer', kind: 'tell', text: 'Please check the release notes.' }])
+  // A task with a contract, by the name in other letters.
+  const task = await send($, 'Docs Writer', 'Goal: Name the failing build step\nDone when: the step is named')
+  expect(task.result).toMatchObject({ success: true, message: expect.stringMatching(/^Handed to docs writer as task task-9\./) })
+  expect(talkif.sends.at(-1)).toMatchObject({ to: 'docs writer', kind: 'tell', goal: 'Name the failing build step', doneWhen: 'the step is named' })
+  // A name an agent of Claude Code's own carries goes there, never through Talkif, also when a Talkif session has it.
+  const mine = await send($, 'reviewer', 'Look at the diff.')
+  expect(mine.result).toEqual({ success: true, message: 'Message sent to reviewer' })
+  expect(local).toEqual(['reviewer'])
+  // Nobody of that name anywhere: Claude Code's refusal stands.
+  const nobody = await send($, 'nobody', 'hello')
+  expect(nobody.result).toEqual({ success: false, message: noOne('nobody') })
+  expect(talkif.sends.length).toBe(2)
+})
+
+test('a Talkif session that does not take it: not delivered, in plain words, sent once', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const world = fakeTalkif(on)
+  world.consent = true
+  const talkif = fakePeers(world)
+  talkif.answer = 'busy'
+  fakeSendMessage($, on, [], { raises: true })
+  await startSession($)
+  await clock.settle()
+  const busy = await send($, 'docs writer', 'Please check the release notes.')
+  expect(busy.result).toEqual({ success: false, message: 'Not delivered: docs writer is busy with another task. Try later, or send it to another session.' })
+  // A task Talkif would refuse never leaves.
+  const bad = await send($, 'docs writer', 'Goal: x\nAutonomy: act')
+  expect(bad.result).toEqual({ success: false, message: 'Not sent: Autonomy must be propose or ask_first, not "act".' })
+  expect(talkif.sends.length).toBe(1)
+})
+
+test('a send whose session.send is not matched to its call still goes out once: the old fallback stays out', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const world = fakeTalkif(on)
+  world.consent = true
+  const talkif = fakePeers(world)
+  // session.send carries other text than the call (an envelope): nothing links the two.
+  fakeSendMessage($, on, [], { raises: true, envelope: '[from main] ' })
+  await startSession($)
+  await clock.settle()
+  const r = await send($, 'docs writer', 'Please check the release notes.')
+  await clock.settle()
+  expect(talkif.sends.length).toBe(1)
+  // Claude Code's own answer stands for the call; the message went out through session.send.
+  expect(r.result).toEqual({ success: false, message: noOne('docs writer') })
+})
+
+test('an engine without session.send: the SendMessage hook hands it over itself, once; a refused permission is never handed on', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const world = fakeTalkif(on)
+  world.consent = true
+  const talkif = fakePeers(world)
+  fakeSendMessage($, on, ['reviewer'], { raises: false })
+  await startSession($)
+  await clock.settle()
+  const handed = await send($, 'docs writer', 'Please check the release notes.')
+  expect(handed.result).toBe('Delivered through Talkif to docs writer. Its answer or updates will come to you as messages.')
+  expect(talkif.sends.length).toBe(1)
+  expect((await send($, 'reviewer', 'Look at the diff.')).result).toBe('Message sent to reviewer')
+  expect(talkif.sends.length).toBe(1)
+  // An error that is not "nobody by that name" (here: the person said no at the prompt) stays as it is.
+  expect(notDeliveredByName({ isError: true, result: 'The user doesn\'t want to proceed with this tool use.', text: 'The user doesn\'t want to proceed with this tool use.' })).toBe(false)
+  expect(notDeliveredByName({ deny: 'read-only' })).toBe(false)
+})
+
+test('a plugin\'s own session.send to a Talkif name is handed over; Claude Code\'s own name and an unknown one are left to it', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const world = fakeTalkif(on)
+  world.consent = true
+  const talkif = fakePeers(world)
+  const local = fakeSendMessage($, on, ['reviewer'], { raises: true })
+  await startSession($)
+  await clock.settle()
+  expect(await $.session.send({ to: 'docs writer', text: 'Please check the release notes.', origin: OTHER_PLUGIN })).toEqual({ isDelivered: true })
+  expect(talkif.sends.length).toBe(1)
+  expect(await $.session.send({ to: 'reviewer', text: 'Look at the diff.', origin: OTHER_PLUGIN })).toEqual({ isDelivered: true })
+  expect(local).toEqual(['reviewer'])
+  expect(await $.session.send({ to: 'nobody', text: 'hello', origin: OTHER_PLUGIN })).toEqual({ isDelivered: false, reason: noOne('nobody') })
+  talkif.answer = 'offline'
+  expect(await $.session.send({ to: 'docs writer', text: 'Again.', origin: OTHER_PLUGIN })).toEqual({ isDelivered: false, reason: 'Not delivered: docs writer is not connected to Talkif right now.' })
+  expect(talkif.sends.length).toBe(2)
+})
+
+test('ListAgents: Talkif sessions follow Claude Code\'s own list; a name Claude Code already lists is not offered through Talkif', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const world = fakeTalkif(on)
+  world.consent = true
+  fakePeers(world)
+  on('tool.call', { tool: 'ListAgents' }, () => ({ result: { listing: 'reviewer (this session\'s agent)', sections: [{ kind: 'agents', total: 1, rows: [{ name: 'Reviewer' }] }] } }))
+  await startSession($)
+  await clock.settle()
+  const listed = await $.tool.call({ tool: 'ListAgents' })
+  const context = (listed.context ?? []).join('\n')
+  expect(context).toMatch(/^Also reachable through Talkif: your sessions on this computer and on others/)
+  expect(context).toMatch(/either name reaches it/)
+  expect(context).toMatch(/- docs writer \[takes: ask, tell\]/)
+  expect(context).not.toMatch(/- reviewer/)
+  expect(LIST_AGENTS_TALKIF).not.toMatch(/other computers and agents/)
+})
+
+test('send results: only "nobody by that name" is handed on, answered in the shape the engine reads', () => {
+  expect(nobodyNamed(noOne('x'))).toBe(true)
+  expect(nobodyNamed("No agent named 'x' is currently addressable. Spawn a new one or use the agent ID.")).toBe(true)
+  expect(nobodyNamed("<tool_use_error>No agent named 'x' is reachable.</tool_use_error>")).toBe(true)
+  expect(nobodyNamed("2 agents are named 'x'. Re-send with the ref of the one you mean:")).toBe(false)
+  expect(nobodyNamed("'x' matches 2 agents by prefix. Re-send with the ref of the one you mean:")).toBe(false)
+  expect(nobodyNamed('Not sent: a plugin hook refused it (no).')).toBe(false)
+  expect(notDeliveredByName({ result: { success: false, message: noOne('x') } })).toBe(true)
+  expect(notDeliveredByName({ result: { success: false, message: 'Timed out sending to x' } })).toBe(false)
+  expect(notDeliveredByName({ result: { success: true, message: 'Message sent to x' } })).toBe(false)
+  expect(sendAnswer({}, { delivered: true, text: 'ok' })).toEqual({ result: { success: true, message: 'ok' } })
+  expect(sendAnswer({ isError: true }, { delivered: true, text: 'ok' })).toEqual({ result: 'ok' })
+  expect(listedNames({ sections: [{ rows: [{ name: ' Main ' }, { id: 'a1' }] }, 'x'] })).toEqual(new Set(['main']))
+  expect(listedNames('a listing')).toEqual(new Set())
+})

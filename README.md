@@ -184,8 +184,8 @@ The server also has tools for an agent that reaches Talkif only through it (`tal
 
 Each session learns which of your other sessions Talkif can reach, on any computer and any agent, and what each is working on. The list comes beside your next message when it changes, never in the system prompt, so it does not cost the session its prompt cache. Claude uses its own tools for them:
 
-- **ListAgents** (Claude Code's own) lists them after the agents on this computer, with each one's name and recap
-- **SendMessage** (Claude Code's own) to one of those names hands it over through Talkif; the answer or updates come back as messages
+- **ListAgents** (Claude Code's own) lists them after Claude Code's own agents and sessions, with each one's name and recap. A session on this computer can be in both lists, under two names: either name reaches it. A Talkif name that Claude Code's list already has is left out of the Talkif part, since a SendMessage to it goes to Claude Code's agent
+- **SendMessage** (Claude Code's own) to one of those names hands it over through Talkif; the answer or updates come back as messages. Claude Code always tries first: an agent, teammate or session of its own by that name gets the message, and Talkif only gets one that Claude Code says nobody of its own carries
 
 A task can carry a contract. Claude writes the SendMessage as labelled lines:
 
@@ -293,8 +293,9 @@ Beside the messages you type, it adds context only when something changed: that 
 | turn start / end | knows which turn is a task from a call or another agent (read-only), sends that task's result to whoever gave it (a question when it ends asking one), reminds the session of a task it holds open and did not move, rings later for an open question or a long task only as the ring options say, refreshes the recap |
 | every tool call | during a task from a call with **Tasks from calls** `read-only`: refuses tools that change anything (only reading tools and a short list of read-only commands pass) and any read of credential files. At any time: refuses the Talkif MCP server's own session tools (`talkif_send`, `talkif_inbox`, …), which act as a separate cloud agent, and its `talkif_setup`, which the plugin's own `talkif_setup` runs for it. Every other call goes on unchanged |
 | tool descriptions | marks those session tools as not for this session |
-| ListAgents | adds your reachable Talkif sessions to its answer |
-| SendMessage | only when Claude Code found no agent of that name and the name is one of your Talkif sessions: delivers the message through Talkif and answers with whether it was delivered, in place of the "no such agent" error |
+| ListAgents | adds your reachable Talkif sessions to its answer, except a name Claude Code already lists |
+| sending a message (session.send) | lets Claude Code deliver every message first. Only when it says nobody of its own carries the name, and the name is one of your Talkif sessions, delivers it through Talkif; never changes or refuses any other message |
+| SendMessage | answers the call with whether Talkif delivered it, in place of Claude Code's "no agent named" answer. On an engine without the sending hook, it does the hand-over itself, for the "no agent named" answer only (never for a refused permission or a failed send). A message is sent through Talkif at most once |
 | starting a subagent | only during a read-only task from a call: refuses teammates, workflows and background subagents, and keeps the subagents it lets start read-only. Otherwise every spawn goes on unchanged; it never changes a subagent's permission mode |
 | permission request | **never answers it**: every request goes on to Claude Code exactly as it came, and you allow or refuse it at your computer. It only notes that the session waits at a permission dialog: in your own work, a ring (when you are away or a ring option says so) tells you that it waits and what for; in a task from a call, that call hears which tool waits |
 | notifications | when Claude Code says a permission dialog is open with nobody typing, the wait for that ring starts |
