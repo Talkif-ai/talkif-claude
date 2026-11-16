@@ -28,7 +28,7 @@ import {
 import type { Presence, RingRules } from './away'
 import { LEAD_CONTEXT, LEAD_ENDED_CONTEXT, LEAD_USAGE, leadLine, leadRefusal, parseLead, parseLeadArg } from './lead'
 import { redactBody } from './secrets'
-import { CURL_ARGV, StreamReader, afterStream, curlConfig } from './stream'
+import { CURL_ARGV, STREAM_FAILURES_BEFORE_POLL, StreamReader, afterStream, curlConfig, wasHealthy } from './stream'
 import type { StreamEnd } from './stream'
 import { fenceUntrusted, untrustedNote } from './untrusted'
 import {
@@ -691,7 +691,9 @@ type BridgeTurn = { requestId: string; callId: string; messages: unknown[]; kind
 // streams: the server said it pushes turns over a live stream (register answer `stream`).
 // transport: how turns arrive now: 'stream' while a live stream is open, 'poll' while long-polling.
 // streamFailures: quick stream failures in a row; streamOff: no stream until then, and why.
+// streamCooldowns: waits after failing streams in a row (each longer; reset by a stream that works).
 // streamOpened: a stream opened since the session last registered (a 404 then means it expired).
+// quietOpen: the next open follows the minute's routine reconnect: not worth a traffic line.
 type Bridge = {
   name: string
   key: string
@@ -706,7 +708,9 @@ type Bridge = {
   transport?: 'stream' | 'poll'
   streamFailures: number
   streamOff?: { until: number; why: string }
+  streamCooldowns: number
   streamOpened?: boolean
+  quietOpen?: boolean
 }
 const labelOf = (b: Bridge): string => accountLabel(b.name, b.accountName)
 const bridges: Bridge[] = []
@@ -2306,7 +2310,10 @@ async function bridgeStream($: EngineInterface, bridge: Bridge, session: string)
     end = { kind: 'dropped', opened: false, livedMs: 0, detail: String(err) }
   }
   bridge.transport = undefined
-  await trace($, end.kind === 'dropped' || end.kind === 'unstartable' ? 'error' : 'info', bridge.name, 'stream', streamEndText(end))
+  // The minute's reconnect is routine: no traffic line for it or for the open that follows.
+  const routine = end.kind === 'closed' && end.reason === 'reconnect'
+  bridge.quietOpen = routine
+  if (!routine) await trace($, end.kind === 'dropped' || end.kind === 'unstartable' ? 'error' : 'info', bridge.name, 'stream', streamEndText(end))
   if (end.kind === 'answered') {
     const refused = refusal(end.status, end.answer)
     if (refused) {
@@ -2315,7 +2322,7 @@ async function bridgeStream($: EngineInterface, bridge: Bridge, session: string)
       return
     }
   }
-  const next = afterStream(end, bridge.streamFailures, Math.random(), bridge.streamOpened === true)
+  const next = afterStream(end, { failures: bridge.streamFailures, cooldowns: bridge.streamCooldowns, openedSinceRegister: bridge.streamOpened === true }, Math.random())
   if (next.then === 'register') {
     // Expired or ended on the server: register again next round (and Talkif ended its lead).
     if (bridge.session === session) {
@@ -2324,12 +2331,22 @@ async function bridgeStream($: EngineInterface, bridge: Bridge, session: string)
     }
     schedule($, bridge, 0)
   } else if (next.then === 'poll') {
-    bridge.streamFailures = 0
+    if (next.failing) {
+      // After the wait, one try: failing again sends it back to the long-poll for longer.
+      bridge.streamFailures = STREAM_FAILURES_BEFORE_POLL - 1
+      bridge.streamCooldowns += 1
+    } else {
+      bridge.streamFailures = 0
+    }
     bridge.streamOff = { until: next.offMs === Infinity ? Infinity : (await $.clock.now()) + next.offMs, why: next.why }
     await trace($, 'info', bridge.name, 'stream', `long-polling instead: ${next.why}`)
     schedule($, bridge, 0)
   } else {
-    bridge.streamFailures = next.failed ? bridge.streamFailures + 1 : 0
+    if (next.failed) bridge.streamFailures += 1
+    else if (wasHealthy(end)) {
+      bridge.streamFailures = 0
+      bridge.streamCooldowns = 0
+    }
     // Not even connected: as far as the status line goes, the same as a failed poll.
     if (end.kind === 'dropped' && !end.opened) bridge.failures += 1
     schedule($, bridge, next.afterMs)
@@ -2410,7 +2427,8 @@ async function streamOpened($: EngineInterface, bridge: Bridge) {
     bridge.received = undefined
     void confirmReceived($, bridge, id)
   }
-  await trace($, 'info', bridge.name, 'stream', 'live stream open')
+  if (!bridge.quietOpen) await trace($, 'info', bridge.name, 'stream', 'live stream open')
+  bridge.quietOpen = false
   await refreshStatus($)
 }
 
@@ -2429,7 +2447,7 @@ async function confirmReceived($: EngineInterface, bridge: Bridge, requestId: st
 async function bridgeStart($: EngineInterface) {
   const { bridges: keys } = await loadCredentials($)
   for (const { name, key } of keys) {
-    const bridge: Bridge = { name, key, session: undefined, failures: 0, streamFailures: 0 }
+    const bridge: Bridge = { name, key, session: undefined, failures: 0, streamFailures: 0, streamCooldowns: 0 }
     bridges.push(bridge)
     schedule($, bridge, 0)
   }

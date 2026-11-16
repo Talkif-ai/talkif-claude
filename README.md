@@ -139,7 +139,8 @@ In the terminal, the plugin holds a **live stream** open with `curl`: Talkif pus
 | Claude Code in a terminal, with `curl` (macOS, Linux, Windows 10 and later) | live stream, pushed |
 | The Claude desktop or mobile app (no programs can start there) | long-poll |
 | No `curl`, an older Talkif, the `transport` option set to `long-poll` | long-poll |
-| The stream failed three times in a row, Talkif did not find it (while Talkif updates), or Talkif asked for fewer connections | long-poll for 10 minutes (1, 5), then the stream again |
+| The stream failed three times in a row | long-poll for 10 minutes, then one try; each try that fails again doubles the wait, up to 2 hours |
+| Talkif did not find the stream (while Talkif updates), or asked for fewer connections | long-poll for 1 (or 5) minutes, then the stream again |
 
 Other agents reach Talkif in their own ways: a program that can hold a WebSocket or read a streaming response gets turns pushed the same way; apps connected with Sign in with Talkif and a webhook address get questions and tasks pushed to that address; MCP clients (claude.ai, Cursor, ChatGPT and others) are not pushed to at all, because an MCP server cannot start a turn in them: they see new events in each Talkif tool result and can wait for them with `talkif_inbox`.
 
@@ -380,7 +381,7 @@ Change them in `/config` → talkif. The API key is in `/plugin` → Installed �
 | A session never rings you while you are away | Ask Claude to run `talkif_setup`: if `call_me` stops at a permission prompt, it names the rule to add. |
 | `the API key was refused (expired or revoked?)` | Create a new key and paste it in Configure options. |
 | `Connection: long-poll (curl could not start here …)` | Install `curl`, or leave it: the long-poll works the same, with a request every 20 seconds. The plugin tries the stream again in the next session. |
-| `Connection: long-poll (the live stream kept dropping …)` | Something on the way (a proxy, a firewall) cuts long responses. The plugin tries again every 10 minutes; set `transport` to `long-poll` to stop trying. |
+| `Connection: long-poll (the live stream kept dropping …)` | Something on the way (a proxy, a firewall) cuts or holds back long responses. The plugin tries again after 10 minutes, then less and less often; set `transport` to `long-poll` to stop trying. |
 | `/talkif` is an unknown command in a session | The session's folder is not in the `folders` option. Add it, or empty the option. |
 | Your call does not reach the session | Call from the Talkif app while signed in, and check `/talkif` says `On`. |
 | `/plugin` lists **talkif** more than once | One is the plugin, the others its tools: Claude Code shows the plugin's own tools (`call_me` and the task tools) as an MCP server named after the plugin, and the bundled Talkif API server as a second one. Same plugin, nothing extra to connect. |

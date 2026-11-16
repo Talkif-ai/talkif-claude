@@ -2188,7 +2188,7 @@ test('a task from a call comes fenced, so a mark heard on the call cannot open a
 
 // ---- 0.32.0: the live stream (Talkif pushes turns; curl holds the connection) ----
 
-import { CURL_ARGV, STREAM_FAILING_OFF_MS, StreamReader, afterStream, curlConfig, parseEvent } from '../hooks/stream'
+import { CURL_ARGV, STREAM_FAILING_OFF_MS, StreamReader, afterStream, curlConfig, parseEvent, wasHealthy } from '../hooks/stream'
 
 /** One frame as Talkif writes it on the stream. */
 const sse = (frame: { type: string; id?: string; data?: unknown }) => `event: ${frame.type}\ndata: ${JSON.stringify({ v: 1, ...frame })}\n\n`
@@ -2270,21 +2270,28 @@ test('curl gets the URL and key on stdin, never in its arguments; a value that w
 })
 
 test('after a stream: deploys and long healthy streams reconnect at once, quick failures back off, then the long-poll', () => {
-  expect(afterStream({ kind: 'closed', reason: 'server_shutting_down', livedMs: 5_000 }, 2, 0.5, true)).toEqual({ then: 'reconnect', afterMs: 500, failed: false })
-  expect(afterStream({ kind: 'dropped', opened: true, livedMs: 3_600_000, detail: 'curl exited 56' }, 0, 0, true)).toEqual({ then: 'reconnect', afterMs: 500, failed: false })
+  expect(afterStream({ kind: 'closed', reason: 'server_shutting_down', livedMs: 5_000 }, { failures: 2, cooldowns: 0, openedSinceRegister: true }, 0.5)).toEqual({ then: 'reconnect', afterMs: 500, failed: false })
+  expect(afterStream({ kind: 'dropped', opened: true, livedMs: 3_600_000, detail: 'curl exited 56' }, { failures: 0, cooldowns: 0, openedSinceRegister: true }, 0)).toEqual({ then: 'reconnect', afterMs: 500, failed: false })
   // Every minute Talkif asks for the next stream: at once, no failure.
-  expect(afterStream({ kind: 'closed', reason: 'reconnect', livedMs: 60_000 }, 2, 0.5, true)).toEqual({ then: 'reconnect', afterMs: 0, failed: false })
+  expect(afterStream({ kind: 'closed', reason: 'reconnect', livedMs: 60_000 }, { failures: 2, cooldowns: 0, openedSinceRegister: true }, 0.5)).toEqual({ then: 'reconnect', afterMs: 0, failed: false })
   // A 404 before any stream opened: a server without the stream; long-poll a minute, no register loop.
-  expect(afterStream({ kind: 'answered', status: 404, answer: '' }, 0, 0.5, false)).toMatchObject({ then: 'poll', offMs: 60_000 })
-  expect(afterStream({ kind: 'dropped', opened: true, livedMs: 2_000, detail: 'x' }, 0, 0.5, true)).toEqual({ then: 'reconnect', afterMs: 1_000, failed: true })
-  expect(afterStream({ kind: 'dropped', opened: false, livedMs: 0, detail: 'curl exited 7' }, 1, 0.5, true)).toEqual({ then: 'reconnect', afterMs: 2_000, failed: true })
-  expect(afterStream({ kind: 'dropped', opened: false, livedMs: 0, detail: 'x' }, 2, 0.5, true)).toMatchObject({ then: 'poll', offMs: STREAM_FAILING_OFF_MS })
-  expect(afterStream({ kind: 'closed', reason: 'replaced', livedMs: 1_000 }, 2, 0.5, true)).toMatchObject({ then: 'poll' })
-  expect(afterStream({ kind: 'unstartable', detail: 'spawn curl ENOENT' }, 0, 0.5, true)).toMatchObject({ then: 'poll', offMs: Infinity })
-  expect(afterStream({ kind: 'answered', status: 404, answer: '' }, 0, 0.5, true)).toEqual({ then: 'register' })
-  expect(afterStream({ kind: 'closed', reason: 'session_ended', livedMs: 1 }, 0, 0.5, true)).toEqual({ then: 'register' })
-  expect(afterStream({ kind: 'answered', status: 429, answer: '' }, 0, 0.5, true)).toMatchObject({ then: 'poll', offMs: 5 * 60_000 })
-  expect(afterStream({ kind: 'left' }, 2, 0.5, true)).toEqual({ then: 'reconnect', afterMs: 0, failed: false })
+  expect(afterStream({ kind: 'answered', status: 404, answer: '' }, { failures: 0, cooldowns: 0, openedSinceRegister: false }, 0.5)).toMatchObject({ then: 'poll', offMs: 60_000 })
+  expect(afterStream({ kind: 'dropped', opened: true, livedMs: 2_000, detail: 'x' }, { failures: 0, cooldowns: 0, openedSinceRegister: true }, 0.5)).toEqual({ then: 'reconnect', afterMs: 1_000, failed: true })
+  expect(afterStream({ kind: 'dropped', opened: false, livedMs: 0, detail: 'curl exited 7' }, { failures: 1, cooldowns: 0, openedSinceRegister: true }, 0.5)).toEqual({ then: 'reconnect', afterMs: 2_000, failed: true })
+  expect(afterStream({ kind: 'dropped', opened: false, livedMs: 0, detail: 'x' }, { failures: 2, cooldowns: 0, openedSinceRegister: true }, 0.5)).toMatchObject({ then: 'poll', offMs: STREAM_FAILING_OFF_MS })
+  expect(afterStream({ kind: 'closed', reason: 'replaced', livedMs: 1_000 }, { failures: 2, cooldowns: 0, openedSinceRegister: true }, 0.5)).toMatchObject({ then: 'poll' })
+  expect(afterStream({ kind: 'unstartable', detail: 'spawn curl ENOENT' }, { failures: 0, cooldowns: 0, openedSinceRegister: true }, 0.5)).toMatchObject({ then: 'poll', offMs: Infinity })
+  expect(afterStream({ kind: 'answered', status: 404, answer: '' }, { failures: 0, cooldowns: 0, openedSinceRegister: true }, 0.5)).toEqual({ then: 'register' })
+  expect(afterStream({ kind: 'closed', reason: 'session_ended', livedMs: 1 }, { failures: 0, cooldowns: 0, openedSinceRegister: true }, 0.5)).toEqual({ then: 'register' })
+  expect(afterStream({ kind: 'answered', status: 429, answer: '' }, { failures: 0, cooldowns: 0, openedSinceRegister: true }, 0.5)).toMatchObject({ then: 'poll', offMs: 5 * 60_000 })
+  expect(afterStream({ kind: 'left' }, { failures: 2, cooldowns: 0, openedSinceRegister: true }, 0.5)).toEqual({ then: 'reconnect', afterMs: 0, failed: false })
+  // Each wait after a failing stream is twice the last, up to two hours.
+  const failing = (cooldowns: number) => afterStream({ kind: 'dropped', opened: false, livedMs: 50_000, detail: 'curl exited 28' }, { failures: 2, cooldowns, openedSinceRegister: false }, 0.5)
+  expect([0, 1, 2, 3, 4].map(c => (n => (n.then === 'poll' ? n.offMs / 60_000 : 0))(failing(c)))).toEqual([10, 20, 40, 80, 120])
+  expect(failing(1)).toMatchObject({ failing: true, why: 'the live stream kept dropping; it is tried again in 20 minutes' })
+  expect(wasHealthy({ kind: 'closed', reason: 'reconnect', livedMs: 60_000 })).toBe(true)
+  expect(wasHealthy({ kind: 'dropped', opened: false, livedMs: 50_000, detail: 'x' })).toBe(false)
+  expect(wasHealthy({ kind: 'closed', reason: 'server_shutting_down', livedMs: 3_000 })).toBe(false)
 })
 
 test('a Talkif that streams: turns come on the stream and are answered over HTTPS; nothing long-polls', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
@@ -2490,6 +2497,20 @@ test('a stream that keeps failing long-polls for 10 minutes, then tries the stre
   world.idle()
   await clock.settle()
   expect(curl.spawns.length).toBe(4)
+  // A stream that connects but never delivers (curl gives up after 50 s): one try, then twice the wait.
+  lastSpawn(curl).end(28)
+  await clock.settle()
+  world.idle()
+  await clock.settle()
+  expect(await cm($, '')).toMatch(/^Connection: long-poll \(the live stream kept dropping; it is tried again in 20 minutes\)\.$/m)
+  await clock.advance(STREAM_FAILING_OFF_MS)
+  world.idle()
+  await clock.settle()
+  expect(curl.spawns.length).toBe(4)
+  await clock.advance(STREAM_FAILING_OFF_MS)
+  world.idle()
+  await clock.settle()
+  expect(curl.spawns.length).toBe(5)
 })
 
 test('switched off while streaming: the session leaves and no stream or poll follows', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {

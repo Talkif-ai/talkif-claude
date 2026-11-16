@@ -137,15 +137,20 @@ export type StreamEnd =
  */
 export type StreamNext =
   | { then: 'reconnect'; afterMs: number; failed: boolean }
-  /** Long-poll, and try the stream again after `offMs` (Infinity: not in this session). */
-  | { then: 'poll'; offMs: number; why: string }
+  /**
+   * Long-poll, and try the stream again after `offMs` (Infinity: not in this session).
+   * `failing`: it kept failing; after the wait it gets one try, and the next wait is longer.
+   */
+  | { then: 'poll'; offMs: number; why: string; failing?: true }
   /** The session is gone on the server: register again (then stream again). */
   | { then: 'register' }
 
 /** Failures in a row (each one quick) before the bridge long-polls for a while instead. */
 export const STREAM_FAILURES_BEFORE_POLL = 3
-/** How long a bridge long-polls after the stream kept failing, before trying it again. */
+/** How long a bridge long-polls after the stream kept failing, before one more try; doubled each time that try fails too. */
 export const STREAM_FAILING_OFF_MS = 10 * 60_000
+/** The longest of those waits. */
+export const STREAM_FAILING_MAX_OFF_MS = 2 * 60 * 60_000
 /** How long it long-polls after Talkif refused another stream (429: too many, too often). */
 export const STREAM_BUSY_OFF_MS = 5 * 60_000
 /** How long it long-polls after Talkif did not find the stream before any opened (a server not updated yet). */
@@ -154,15 +159,27 @@ export const STREAM_MISSING_OFF_MS = 60_000
 export const STREAM_HEALTHY_MS = 20_000
 
 /**
- * The next step after a stream ended, given the failures before it in a row and whether
- * a stream opened since the session last registered. `random` in [0, 1) spreads the
- * reconnects of many sessions after a deploy.
+ * What came before a stream: its failures in a row, the waits after failing streams in
+ * a row (`cooldowns`), and whether a stream opened since the session last registered.
  */
-export function afterStream(end: StreamEnd, failuresBefore: number, random: number, openedSinceRegister: boolean): StreamNext {
+export type StreamHistory = { failures: number; cooldowns: number; openedSinceRegister: boolean }
+
+/** It opened and lived long enough to count as working: the failure counts start over. */
+export const wasHealthy = (end: StreamEnd): boolean =>
+  (end.kind === 'closed' && end.livedMs >= STREAM_HEALTHY_MS) || (end.kind === 'dropped' && end.opened && end.livedMs >= STREAM_HEALTHY_MS)
+
+/**
+ * The next step after a stream ended. `random` in [0, 1) spreads the reconnects of many
+ * sessions after a deploy.
+ */
+export function afterStream(end: StreamEnd, history: StreamHistory, random: number): StreamNext {
   const jitter = (base: number) => Math.round(base * (0.5 + random))
   const failure = (): StreamNext => {
-    const failures = failuresBefore + 1
-    if (failures >= STREAM_FAILURES_BEFORE_POLL) return { then: 'poll', offMs: STREAM_FAILING_OFF_MS, why: 'the live stream kept dropping; it is tried again in 10 minutes' }
+    const failures = history.failures + 1
+    if (failures >= STREAM_FAILURES_BEFORE_POLL) {
+      const offMs = Math.min(STREAM_FAILING_MAX_OFF_MS, STREAM_FAILING_OFF_MS * 2 ** history.cooldowns)
+      return { then: 'poll', offMs, why: `the live stream kept dropping; it is tried again in ${Math.round(offMs / 60_000)} minutes`, failing: true }
+    }
     return { then: 'reconnect', afterMs: jitter(Math.min(30_000, 1_000 * 2 ** (failures - 1))), failed: true }
   }
   switch (end.kind) {
@@ -173,7 +190,7 @@ export function afterStream(end: StreamEnd, failuresBefore: number, random: numb
       // any did, it is a server without the stream (one not updated yet, while Talkif
       // updates): registering again would land there again, so long-poll for a minute.
       if (end.status === 404) {
-        return openedSinceRegister ? { then: 'register' } : { then: 'poll', offMs: STREAM_MISSING_OFF_MS, why: 'Talkif did not find the live stream; it is tried again in a minute' }
+        return history.openedSinceRegister ? { then: 'register' } : { then: 'poll', offMs: STREAM_MISSING_OFF_MS, why: 'Talkif did not find the live stream; it is tried again in a minute' }
       }
       if (end.status === 429) return { then: 'poll', offMs: STREAM_BUSY_OFF_MS, why: 'Talkif refused another live stream for now; it is tried again in 5 minutes' }
       return failure()
