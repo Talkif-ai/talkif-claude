@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.31.7 — 2026-11-21
+
+- **Your flow sets the talking style.** When your agent's own prompt describes how it should talk (warmer, by your name, with a little humour), the phone agent follows it; without one it stays direct and businesslike as before. Short reactions such as "hmm" are fine inside a reply that says something; a reply that is only "Mm-hm" is still never given.
+- **No more silence while it checks.** In the turn it asks a connector, it may start with a few natural words ("let me check"), so you are not left waiting in silence. It still never says it sent or asked anything it did not.
+- **It does not hang up on an answer.** A connector's answer, or one still on its way, is never a reason to end the call: it tells you what came back first and ends only after you say goodbye.
+- Run `/talkif publish` after updating so your flow gets the new instructions.
+
 ## 0.31.6 — 2026-11-21
 
 - **The phone agent talks like a voice, not a text box.** Replies stay at one or two short sentences, under 50 words, unless you ask for detail. Everything it writes is spoken, so no lists, brackets, asides or notes to itself; several items come as sentences ("two things: first…"). When it has to come back to something it says so and adds something new, and a question you ask again gets a different angle instead of the same answer.

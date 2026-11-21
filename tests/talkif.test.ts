@@ -945,6 +945,13 @@ test('the call prompt fits the Connectors node and speaks as Talkif, in spoken f
   expect(IDLE_PROMPT).toMatch(/are no switch/)
 })
 
+test('the call prompt lets the flow set the talking style, fills the wait, and never hangs up on an answer', () => {
+  expect(IDLE_PROMPT).toMatch(/Talk in the style the rest of your instructions set, if they set one; otherwise be direct and businesslike/)
+  expect(IDLE_PROMPT).toMatch(/Never answer with only a sound/)
+  expect(IDLE_PROMPT).toMatch(/In the turn that calls a tool you may start with a few natural words/)
+  expect(IDLE_PROMPT).toMatch(/A connector's answer, or one on its way, is never a reason to end/)
+})
+
 test('a session with no recap yet is still described in the list, by its place', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
   const clock = mock.clock(on)
   mock.store(on)
