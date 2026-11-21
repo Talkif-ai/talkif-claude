@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.31.6 — 2026-11-21
+
+- **The phone agent talks like a voice, not a text box.** Replies stay at one or two short sentences, under 50 words, unless you ask for detail. Everything it writes is spoken, so no lists, brackets, asides or notes to itself; several items come as sentences ("two things: first…"). When it has to come back to something it says so and adds something new, and a question you ask again gets a different angle instead of the same answer.
+- **It hears better.** A word that seems out of place is read as the sound-alike that fits the call, above all your connectors' names and topics and words said earlier on it. Technical terms or a few words of another language inside your sentence, and voices in the background, no longer switch its language.
+- **It says what it is.** Asked who it is, it is your Talkif voice assistant; it never names the AI model or company behind it. Asked to slow down, it says its voice speed is fixed and uses shorter sentences instead of promising something it cannot do.
+- The call prompt stays within the 8000 characters Talkif takes for a Connectors node (a test checks it). Run `/talkif publish` after updating so your flow gets the new instructions.
+
 ## 0.31.5 — 2026-11-16
 
 - **SendMessage to a Talkif session works again.** On current Claude Code, a SendMessage to a name ListAgents listed under Talkif was answered "No agent named … is reachable" and nothing went out: Claude Code now answers an unknown name with a plain result instead of an error, which the plugin did not take as "not delivered". The hand-over now happens where every message passes before Claude Code delivers it. Claude Code still goes first, so an agent, teammate or session of its own by that name always gets the message; only a name nobody of its own carries goes to the Talkif session of that name, and the SendMessage call then says what Talkif did (delivered, handed over as a task, busy, not connected). A message from another plugin to such a name is handed over too.

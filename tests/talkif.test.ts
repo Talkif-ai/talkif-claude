@@ -936,6 +936,15 @@ test('the call prompt says when a session is not there, and never claims a hand-
   expect(IDLE_PROMPT).toMatch(/is not a task: answer it in a few words and send nothing/)
 })
 
+test('the call prompt fits the Connectors node and speaks as Talkif, in spoken form only', () => {
+  // Talkif refuses Connectors instructions over 8000 characters at save and publish.
+  expect(IDLE_PROMPT.length).toBeLessThanOrEqual(8000)
+  expect(IDLE_PROMPT).toMatch(/you are their Talkif voice assistant; never name the AI model or company behind you/)
+  expect(IDLE_PROMPT).toMatch(/Everything you write is spoken aloud/)
+  expect(IDLE_PROMPT).toMatch(/under 50 words, unless they ask for detail/)
+  expect(IDLE_PROMPT).toMatch(/are no switch/)
+})
+
 test('a session with no recap yet is still described in the list, by its place', { options: { apiKey: 'tif_test_FAKE' } }, async ($, on) => {
   const clock = mock.clock(on)
   mock.store(on)
